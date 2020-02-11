@@ -157,6 +157,12 @@ Y
             runner = CliRunner()
             result = runner.invoke(init_cmd, ["--output-dir", temp], input=user_input)
 
+            print("#########################")
+            print(result.stdout)
+            print("#########################")
+            print(result.output)
+            print("#########################")
+
             self.assertFalse(result.exception)
             expected_output_folder = Path(temp, "eb-app-maven")
             self.assertTrue(expected_output_folder.exists)
@@ -215,7 +221,7 @@ Y
         # 3: select event-bridge app from scratch
         # N: Use default profile
         # 2: uses second profile from displayed one (myprofile)
-        # schemas aws region us-east-1
+        # schemas aws region us-west-2
         # 1: select aws.events as registries
         # 1: select aws schema
 
@@ -226,7 +232,7 @@ eb-app-python37
 3
 N
 2
-1
+3
 1
 1
         """

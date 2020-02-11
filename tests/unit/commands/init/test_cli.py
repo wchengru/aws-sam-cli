@@ -525,7 +525,7 @@ Y
         session_mock.return_value.profile_name = "default"
         session_mock.return_value.region_name = "ap-south-1"
         session_mock.return_value.available_profiles = ["default", "test-profile"]
-        session_mock.return_value.get_available_regions.return_value = ["ap-south-2", "us-east-1"]
+        session_mock.return_value.get_available_regions.return_value = ["ap-south-2", "us-west-2"]
         schemas_api_caller_mock.return_value.list_registries.return_value = {
             "registries": ["aws.events"],
             "next_token": None,
