@@ -17,7 +17,7 @@ class PackageRegressionBase(TestCase):
     @classmethod
     def setUpClass(cls):
         cls.region_name = os.environ.get("AWS_DEFAULT_REGION")
-        cls.pre_created_bucket = os.environ.get("AWS_S3", False)
+        cls.pre_created_bucket = os.environ.get(os.environ.get("AWS_S3", False), False)
         cls.bucket_name = cls.pre_created_bucket if cls.pre_created_bucket else str(uuid.uuid4())
         cls.test_data_path = Path(__file__).resolve().parents[2].joinpath("integration", "testdata", "package")
 
