@@ -243,11 +243,14 @@ class TestDeploy(PackageIntegBase, DeployIntegBase):
 
         deploy_process_execute = Popen(deploy_command_list, stdout=PIPE, stderr=PIPE)
         try:
-            _, stderr = deploy_process_execute.communicate(timeout=TIMEOUT)
+            stdout, stderr = deploy_process_execute.communicate(timeout=TIMEOUT)
         except TimeoutExpired:
+            print("Test timed out.")
             deploy_process_execute.kill()
             raise
         # Error asking for s3 bucket
+        print(deploy_process_execute.stdout)
+        print(deploy_process_execute.stderr)
         self.assertEqual(deploy_process_execute.returncode, 1)
         stderr = stderr.strip()
         self.assertIn(
@@ -278,11 +281,14 @@ class TestDeploy(PackageIntegBase, DeployIntegBase):
 
         deploy_process_execute = Popen(deploy_command_list, stdout=PIPE, stderr=PIPE)
         try:
-            deploy_process_execute.communicate(timeout=TIMEOUT)
+            stdout, stderr = deploy_process_execute.communicate(timeout=TIMEOUT)
         except TimeoutExpired:
+            print("Test timed out.")
             deploy_process_execute.kill()
             raise
         # Error no stack name present
+        print(stdout)
+        print(stderr)
         self.assertEqual(deploy_process_execute.returncode, 2)
 
     @parameterized.expand(["aws-serverless-function.yaml"])
