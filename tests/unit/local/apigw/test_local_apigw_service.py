@@ -1,6 +1,7 @@
 import base64
 import copy
 import json
+from datetime import datetime
 from unittest import TestCase
 
 from unittest.mock import Mock, patch, ANY, MagicMock
@@ -282,6 +283,7 @@ class TestApiGatewayService(TestCase):
     @patch("samcli.local.apigw.local_apigw_service.Flask")
     def test_create_creates_flask_app_with_url_rules(self, flask):
         app_mock = MagicMock()
+        app_mock.config = {}
         flask.return_value = app_mock
 
         self.api_service._construct_error_handling = Mock()
@@ -672,6 +674,7 @@ class TestService_construct_event(TestCase):
         self.request_mock.path = "path"
         self.request_mock.method = "GET"
         self.request_mock.remote_addr = "190.0.0.0"
+        self.request_mock.host = "190.0.0.1"
         self.request_mock.get_data.return_value = b"DATA!!!!"
         query_param_args_mock = Mock()
         query_param_args_mock.lists.return_value = {"query": ["params"]}.items()
@@ -683,6 +686,8 @@ class TestService_construct_event(TestCase):
         self.request_mock.headers = headers_mock
         self.request_mock.view_args = {"path": "params"}
         self.request_mock.scheme = "http"
+        environ_dict = {"SERVER_PROTOCOL": "HTTP/1.1"}
+        self.request_mock.environ = environ_dict
 
         expected = (
             '{"body": "DATA!!!!", "httpMethod": "GET", '
@@ -694,7 +699,8 @@ class TestService_construct_event(TestCase):
             '"identity": {"accountId": null, "apiKey": null, "userArn": null, '
             '"cognitoAuthenticationProvider": null, "cognitoIdentityPoolId": null, "userAgent": '
             '"Custom User Agent String", "caller": null, "cognitoAuthenticationType": null, "sourceIp": '
-            '"190.0.0.0", "user": null}, "accountId": "123456789012"}, "headers": {"Content-Type": '
+            '"190.0.0.0", "user": null}, "accountId": "123456789012", "domainName": "190.0.0.1", '
+            '"protocol": "HTTP/1.1"}, "headers": {"Content-Type": '
             '"application/json", "X-Test": "Value", "X-Forwarded-Port": "3000", "X-Forwarded-Proto": "http"}, '
             '"multiValueHeaders": {"Content-Type": ["application/json"], "X-Test": ["Value"], '
             '"X-Forwarded-Port": ["3000"], "X-Forwarded-Proto": ["http"]}, '
@@ -704,16 +710,32 @@ class TestService_construct_event(TestCase):
 
         self.expected_dict = json.loads(expected)
 
+    def validate_request_context_and_remove_request_time_data(self, event_json):
+        request_time = event_json["requestContext"].pop("requestTime", None)
+        request_time_epoch = event_json["requestContext"].pop("requestTimeEpoch", None)
+
+        self.assertIsInstance(request_time, str)
+        parsed_request_time = datetime.strptime(request_time, "%d/%b/%Y:%H:%M:%S +0000")
+        self.assertIsInstance(parsed_request_time, datetime)
+
+        self.assertIsInstance(request_time_epoch, int)
+
     def test_construct_event_with_data(self):
         actual_event_str = LocalApigwService._construct_event(self.request_mock, 3000, binary_types=[])
-        self.assertEqual(json.loads(actual_event_str), self.expected_dict)
+
+        actual_event_json = json.loads(actual_event_str)
+        self.validate_request_context_and_remove_request_time_data(actual_event_json)
+
+        self.assertEqual(actual_event_json["body"], self.expected_dict["body"])
 
     def test_construct_event_no_data(self):
         self.request_mock.get_data.return_value = None
-        self.expected_dict["body"] = None
 
         actual_event_str = LocalApigwService._construct_event(self.request_mock, 3000, binary_types=[])
-        self.assertEqual(json.loads(actual_event_str), self.expected_dict)
+        actual_event_json = json.loads(actual_event_str)
+        self.validate_request_context_and_remove_request_time_data(actual_event_json)
+
+        self.assertEqual(actual_event_json["body"], None)
 
     @patch("samcli.local.apigw.local_apigw_service.LocalApigwService._should_base64_encode")
     def test_construct_event_with_binary_data(self, should_base64_encode_patch):
@@ -723,12 +745,13 @@ class TestService_construct_event(TestCase):
         base64_body = base64.b64encode(binary_body).decode("utf-8")
 
         self.request_mock.get_data.return_value = binary_body
-        self.expected_dict["body"] = base64_body
-        self.expected_dict["isBase64Encoded"] = True
-        self.maxDiff = None
 
         actual_event_str = LocalApigwService._construct_event(self.request_mock, 3000, binary_types=[])
-        self.assertEqual(json.loads(actual_event_str), self.expected_dict)
+        actual_event_json = json.loads(actual_event_str)
+        self.validate_request_context_and_remove_request_time_data(actual_event_json)
+
+        self.assertEqual(actual_event_json["body"], base64_body)
+        self.assertEqual(actual_event_json["isBase64Encoded"], True)
 
     def test_event_headers_with_empty_list(self):
         request_mock = Mock()
