@@ -116,7 +116,7 @@ class LocalApigwService(BaseLocalService):
         stderr samcli.lib.utils.stream_writer.StreamWriter
             Optional stream writer where the stderr from Docker container should be written to
         """
-        super(LocalApigwService, self).__init__(lambda_runner.is_debugging(), port=port, host=host)
+        super().__init__(lambda_runner.is_debugging(), port=port, host=host)
         self.api = api
         self.lambda_runner = lambda_runner
         self.static_dir = static_dir
@@ -136,6 +136,9 @@ class LocalApigwService(BaseLocalService):
 
         # add converter to support catch-all route
         self._app.url_map.converters["path"] = CatchAllPathConverter
+
+        # Prevent the dev server from emitting headers that will make the browser cache response by default
+        self._app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
         # This will normalize all endpoints and strip any trailing '/'
         self._app.url_map.strict_slashes = False
@@ -179,7 +182,11 @@ class LocalApigwService(BaseLocalService):
         """
 
         self._app.add_url_rule(
-            path, endpoint=path, view_func=self._request_handler, methods=methods, provide_automatic_options=False,
+            path,
+            endpoint=path,
+            view_func=self._request_handler,
+            methods=methods,
+            provide_automatic_options=False,
         )
         for route_key in self._generate_route_keys(methods, path):
             self._dict_of_routes[route_key] = Route(
@@ -285,8 +292,8 @@ class LocalApigwService(BaseLocalService):
             (status_code, headers, body) = self._parse_lambda_output(
                 lambda_response, self.api.binary_media_types, request
             )
-        except LambdaResponseParseException:
-            LOG.error(str(LambdaResponseParseException))
+        except LambdaResponseParseException as ex:
+            LOG.error("Invalid lambda response received: %s", ex)
             return ServiceErrorResponses.lambda_failure_response()
 
         return self.service_response(body, headers, status_code)
@@ -338,8 +345,8 @@ class LocalApigwService(BaseLocalService):
         # pylint: disable-msg=too-many-statements
         try:
             json_output = json.loads(lambda_output)
-        except ValueError:
-            raise LambdaResponseParseException(f"Lambda response must be valid json: {lambda_output}")
+        except ValueError as ex:
+            raise LambdaResponseParseException("Lambda response must be valid json") from ex
 
         if not isinstance(json_output, dict):
             raise LambdaResponseParseException(f"Lambda returned {type(json_output)} instead of dict")
@@ -357,26 +364,22 @@ class LocalApigwService(BaseLocalService):
             status_code = int(status_code)
             if status_code <= 0:
                 raise ValueError
-        except ValueError:
-            message = "statusCode must be a positive int"
-            LOG.error(message)
-            raise LambdaResponseParseException(message)
+        except ValueError as ex:
+            raise LambdaResponseParseException("statusCode must be a positive int") from ex
 
         try:
             if body:
                 body = str(body)
-        except ValueError:
-            message = "Non null response bodies should be able to convert to string: {}".format(body)
-            LOG.error(message)
-            raise LambdaResponseParseException(message)
+        except ValueError as ex:
+            raise LambdaResponseParseException(
+                f"Non null response bodies should be able to convert to string: {body}"
+            ) from ex
 
         # API Gateway only accepts statusCode, body, headers, and isBase64Encoded in
         # a response shape.
         invalid_keys = LocalApigwService._invalid_apig_response_keys(json_output)
         if bool(invalid_keys):
-            msg = "Invalid API Gateway Response Keys: " + str(invalid_keys) + " in " + str(json_output)
-            LOG.error(msg)
-            raise LambdaResponseParseException(msg)
+            raise LambdaResponseParseException(f"Invalid API Gateway Response Keys: {invalid_keys} in {json_output}")
 
         # If the customer doesn't define Content-Type default to application/json
         if "Content-Type" not in headers:
@@ -470,6 +473,8 @@ class LocalApigwService(BaseLocalService):
 
         endpoint = PathConverter.convert_path_to_api_gateway(flask_request.endpoint)
         method = flask_request.method
+        protocol = flask_request.environ.get("SERVER_PROTOCOL", "HTTP/1.1")
+        host = flask_request.host
 
         request_data = flask_request.get_data()
 
@@ -488,7 +493,13 @@ class LocalApigwService(BaseLocalService):
         query_string_dict, multi_value_query_string_dict = LocalApigwService._query_string_params(flask_request)
 
         context = RequestContext(
-            resource_path=endpoint, http_method=method, stage=stage_name, identity=identity, path=endpoint
+            resource_path=endpoint,
+            http_method=method,
+            stage=stage_name,
+            identity=identity,
+            path=endpoint,
+            protocol=protocol,
+            domain_name=host,
         )
 
         headers_dict, multi_value_headers_dict = LocalApigwService._event_headers(flask_request, port)
@@ -508,7 +519,7 @@ class LocalApigwService(BaseLocalService):
             stage_variables=stage_variables,
         )
 
-        event_str = json.dumps(event.to_dict())
+        event_str = json.dumps(event.to_dict(), sort_keys=True)
         LOG.debug("Constructed String representation of Event to invoke Lambda. Event: %s", event_str)
         return event_str
 
