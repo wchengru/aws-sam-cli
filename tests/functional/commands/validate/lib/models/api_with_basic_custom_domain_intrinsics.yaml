@@ -12,14 +12,6 @@ Parameters:
     Type: String
     Default: REGIONAL
 
-  MyMTLSUri:
-    Default: another-api-truststore-uri
-    Type: String
-
-  MyMTLSVersion:
-    Default: another-api-truststore-version
-    Type: String
-
 Resources:
   MyFunction:
     Condition: C1
@@ -59,8 +51,4 @@ Resources:
         CertificateArn: !Ref MyDomainCert
         EndpointConfiguration: !Ref EndpointConf
         BasePath: [ "/get", "/fetch" ]
-        MutualTlsAuthentication:
-          TruststoreUri: !Ref MyMTLSUri
-          TruststoreVersion: !Ref MyMTLSVersion
-        SecurityPolicy: TLS_1_2
 

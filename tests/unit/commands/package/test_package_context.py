@@ -1,6 +1,6 @@
 """Test sam package command"""
 from unittest import TestCase
-from unittest.mock import patch, MagicMock, Mock, call, ANY
+from unittest.mock import patch, MagicMock
 import tempfile
 
 
@@ -15,13 +15,10 @@ class TestPackageCommand(TestCase):
             template_file="template-file",
             s3_bucket="s3-bucket",
             s3_prefix="s3-prefix",
-            image_repository="image-repo",
-            image_repositories=None,
             kms_key_id="kms-key-id",
             output_template_file=None,
             use_json=True,
             force_upload=True,
-            no_progressbar=False,
             metadata={},
             region=None,
             profile=None,
@@ -42,13 +39,10 @@ class TestPackageCommand(TestCase):
                     template_file=temp_template_file.name,
                     s3_bucket="s3-bucket",
                     s3_prefix="s3-prefix",
-                    image_repository="image-repo",
-                    image_repositories=None,
                     kms_key_id="kms-key-id",
                     output_template_file=temp_output_template_file.name,
                     use_json=True,
                     force_upload=True,
-                    no_progressbar=False,
                     metadata={},
                     region=None,
                     profile=None,
@@ -63,13 +57,10 @@ class TestPackageCommand(TestCase):
                 template_file=temp_template_file.name,
                 s3_bucket="s3-bucket",
                 s3_prefix="s3-prefix",
-                image_repository="image-repo",
-                image_repositories=None,
                 kms_key_id="kms-key-id",
                 output_template_file=None,
                 use_json=True,
                 force_upload=True,
-                no_progressbar=False,
                 metadata={},
                 region=None,
                 profile=None,
@@ -84,33 +75,12 @@ class TestPackageCommand(TestCase):
                 template_file=temp_template_file.name,
                 s3_bucket="s3-bucket",
                 s3_prefix="s3-prefix",
-                image_repository="image-repo",
-                image_repositories=None,
                 kms_key_id="kms-key-id",
                 output_template_file=None,
                 use_json=False,
                 force_upload=True,
-                no_progressbar=False,
                 metadata={},
                 region=None,
                 profile=None,
             )
             package_command_context.run()
-
-    @patch.object(Template, "export", MagicMock(return_value={}))
-    @patch("boto3.Session")
-    @patch("boto3.client")
-    @patch("samcli.commands.package.package_context.get_boto_config_with_user_agent")
-    def test_boto_clients_created_with_config(self, patched_get_config, patched_boto_client, patched_boto_session):
-        with self.assertRaises(PackageFailedError):
-            self.package_command_context.run()
-
-        patched_boto_client.assert_has_calls([call("s3", config=ANY)])
-        patched_boto_client.assert_has_calls([call("ecr", config=ANY)])
-        patched_boto_client.assert_has_calls([call("signer", config=ANY)])
-
-        patched_get_config.assert_has_calls(
-            [call(region_name=ANY, signature_version=ANY), call(region_name=ANY), call(region_name=ANY)]
-        )
-
-        print("hello")

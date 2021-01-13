@@ -18,9 +18,7 @@ class LambdaBuildContainer(Container):
     and if the build was successful, copies back artifacts to the host filesystem
     """
 
-    _IMAGE_OWNER = "amazon"
-    _IMAGE_NAME_PREFIX = "aws-sam-cli-build-image"
-    _IMAGE_NAME_FORMAT = "{}/{}-{}"  # amazon/aws-sam-cli-build-image-nodejs10.x
+    _LAMBCI_IMAGE_REPO_NAME = "lambci/lambda"
     _BUILDERS_EXECUTABLE = "lambda-builders"
 
     def __init__(  # pylint: disable=too-many-locals
@@ -88,7 +86,7 @@ class LambdaBuildContainer(Container):
         if log_level:
             env_vars = {"LAMBDA_BUILDERS_LOG_LEVEL": log_level}
 
-        super().__init__(
+        super(LambdaBuildContainer, self).__init__(
             image,
             cmd,
             container_dirs["source_dir"],
@@ -116,8 +114,6 @@ class LambdaBuildContainer(Container):
         executable_search_paths,
         mode,
     ):
-
-        runtime = runtime.replace(".al2", "")
 
         return json.dumps(
             {
@@ -235,6 +231,8 @@ class LambdaBuildContainer(Container):
 
     @staticmethod
     def _get_image(runtime):
-        return LambdaBuildContainer._IMAGE_NAME_FORMAT.format(
-            LambdaBuildContainer._IMAGE_OWNER, LambdaBuildContainer._IMAGE_NAME_PREFIX, runtime
+        runtime_to_images = {"nodejs10.x": "amazon/lambda-build-node10.x"}
+
+        return runtime_to_images.get(
+            runtime, "{}:build-{}".format(LambdaBuildContainer._LAMBCI_IMAGE_REPO_NAME, runtime)
         )

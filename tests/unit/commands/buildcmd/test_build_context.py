@@ -44,8 +44,6 @@ class TestBuildContext__enter__(TestCase):
             parameter_overrides="overrides",
             skip_pull_image=True,
             mode="buildmode",
-            cached=False,
-            cache_dir="cache_dir",
         )
         setup_build_dir_mock = Mock()
         build_dir_result = setup_build_dir_mock.return_value = "my/new/build/dir"
@@ -110,8 +108,6 @@ class TestBuildContext__enter__(TestCase):
             parameter_overrides="overrides",
             skip_pull_image=True,
             mode="buildmode",
-            cached=False,
-            cache_dir="cache_dir",
         )
         setup_build_dir_mock = Mock()
         build_dir_result = setup_build_dir_mock.return_value = "my/new/build/dir"
@@ -155,8 +151,6 @@ class TestBuildContext__enter__(TestCase):
             parameter_overrides="overrides",
             skip_pull_image=True,
             mode="buildmode",
-            cached=False,
-            cache_dir="cache_dir",
         )
         setup_build_dir_mock = Mock()
         build_dir_result = setup_build_dir_mock.return_value = "my/new/build/dir"
@@ -202,8 +196,6 @@ class TestBuildContext__enter__(TestCase):
             parameter_overrides="overrides",
             skip_pull_image=True,
             mode="buildmode",
-            cached=False,
-            cache_dir="cache_dir",
         )
         setup_build_dir_mock = Mock()
         build_dir_result = setup_build_dir_mock.return_value = "my/new/build/dir"
@@ -214,7 +206,6 @@ class TestBuildContext__enter__(TestCase):
         self.assertTrue(func1 in context.resources_to_build.functions)
         self.assertTrue(layer1 in context.resources_to_build.layers)
         self.assertTrue(layer2 not in context.resources_to_build.layers)
-        self.assertTrue(context.is_building_specific_resource)
 
     @patch("samcli.commands.build.build_context.get_template_data")
     @patch("samcli.commands.build.build_context.SamFunctionProvider")
@@ -249,8 +240,6 @@ class TestBuildContext__enter__(TestCase):
             parameter_overrides="overrides",
             skip_pull_image=True,
             mode="buildmode",
-            cached=False,
-            cache_dir="cache_dir",
         )
         setup_build_dir_mock = Mock()
         build_dir_result = setup_build_dir_mock.return_value = "my/new/build/dir"
@@ -298,8 +287,6 @@ class TestBuildContext__enter__(TestCase):
             parameter_overrides="overrides",
             skip_pull_image=True,
             mode="buildmode",
-            cached=False,
-            cache_dir="cache_dir",
         )
         setup_build_dir_mock = Mock()
         build_dir_result = setup_build_dir_mock.return_value = "my/new/build/dir"
@@ -319,7 +306,6 @@ class TestBuildContext__enter__(TestCase):
         self.assertEqual(context.output_template_path, os.path.join(build_dir_result, "template.yaml"))
         self.assertEqual(context.manifest_path_override, os.path.abspath("manifest_path"))
         self.assertEqual(context.mode, "buildmode")
-        self.assertFalse(context.is_building_specific_resource)
         resources_to_build = context.resources_to_build
         self.assertEqual(resources_to_build.functions, [func1, func2])
         self.assertEqual(resources_to_build.layers, [layer1])

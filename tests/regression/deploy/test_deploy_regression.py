@@ -28,12 +28,12 @@ class TestDeployRegression(PackageRegressionBase, DeployRegressionBase):
         self.stack_names = []
         self.cf_client = boto3.client("cloudformation")
         time.sleep(CFN_SLEEP)
-        super().setUp()
+        super(TestDeployRegression, self).setUp()
 
     def tearDown(self):
         for stack_name in self.stack_names:
             self.cf_client.delete_stack(StackName=stack_name)
-        super().tearDown()
+        super(TestDeployRegression, self).tearDown()
 
     def prepare_package(self, template_file):
         template_path = self.test_data_path.joinpath(template_file)

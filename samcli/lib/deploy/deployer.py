@@ -52,14 +52,9 @@ DESCRIBE_STACK_EVENTS_DEFAULT_ARGS = OrderedDict(
 
 DESCRIBE_STACK_EVENTS_TABLE_HEADER_NAME = "CloudFormation events from changeset"
 
-DESCRIBE_CHANGESET_FORMAT_STRING = "{Operation:<{0}} {LogicalResourceId:<{1}} {ResourceType:<{2}} {Replacement:<{3}}"
+DESCRIBE_CHANGESET_FORMAT_STRING = "{Operation:<{0}} {LogicalResourceId:<{1}} {ResourceType:<{2}}"
 DESCRIBE_CHANGESET_DEFAULT_ARGS = OrderedDict(
-    {
-        "Operation": "Operation",
-        "LogicalResourceId": "LogicalResourceId",
-        "ResourceType": "ResourceType",
-        "Replacement": "Replacement",
-    }
+    {"Operation": "Operation", "LogicalResourceId": "LogicalResourceId", "ResourceType": "ResourceType"}
 )
 
 DESCRIBE_CHANGESET_TABLE_HEADER_NAME = "CloudFormation stack changeset"
@@ -116,7 +111,7 @@ class Deployer:
             # catch that and throw a deploy failed error.
 
             LOG.debug("Botocore Exception : %s", str(e))
-            raise DeployFailedError(stack_name=stack_name, msg=str(e)) from e
+            raise DeployFailedError(stack_name=stack_name, msg=str(e))
 
         except Exception as e:
             # We don't know anything about this exception. Don't handle
@@ -192,12 +187,12 @@ class Deployer:
             return resp, changeset_type
         except botocore.exceptions.ClientError as ex:
             if "The bucket you are attempting to access must be addressed using the specified endpoint" in str(ex):
-                raise DeployBucketInDifferentRegionError(f"Failed to create/update stack {stack_name}") from ex
-            raise ChangeSetError(stack_name=stack_name, msg=str(ex)) from ex
+                raise DeployBucketInDifferentRegionError(f"Failed to create/update stack {stack_name}")
+            raise ChangeSetError(stack_name=stack_name, msg=str(ex))
 
         except Exception as ex:
             LOG.debug("Unable to create changeset", exc_info=ex)
-            raise ChangeSetError(stack_name=stack_name, msg=str(ex)) from ex
+            raise ChangeSetError(stack_name=stack_name, msg=str(ex))
 
     @pprint_column_names(
         format_string=DESCRIBE_CHANGESET_FORMAT_STRING,
@@ -227,9 +222,6 @@ class Deployer:
                     {
                         "LogicalResourceId": resource_props.get("LogicalResourceId"),
                         "ResourceType": resource_props.get("ResourceType"),
-                        "Replacement": "N/A"
-                        if resource_props.get("Replacement") is None
-                        else resource_props.get("Replacement"),
                     }
                 )
 
@@ -237,12 +229,7 @@ class Deployer:
             for value in v:
                 row_color = self.deploy_color.get_changeset_action_color(action=k)
                 pprint_columns(
-                    columns=[
-                        changes_showcase.get(k, k),
-                        value["LogicalResourceId"],
-                        value["ResourceType"],
-                        value["Replacement"],
-                    ],
+                    columns=[changes_showcase.get(k, k), value["LogicalResourceId"], value["ResourceType"]],
                     width=kwargs["width"],
                     margin=kwargs["margin"],
                     format_string=DESCRIBE_CHANGESET_FORMAT_STRING,
@@ -255,7 +242,7 @@ class Deployer:
             # There can be cases where there are no changes,
             # but could be an an addition of a SNS notification topic.
             pprint_columns(
-                columns=["-", "-", "-", "-"],
+                columns=["-", "-", "-"],
                 width=kwargs["width"],
                 margin=kwargs["margin"],
                 format_string=DESCRIBE_CHANGESET_FORMAT_STRING,
@@ -297,7 +284,7 @@ class Deployer:
 
             raise ChangeSetError(
                 stack_name=stack_name, msg="ex: {0} Status: {1}. Reason: {2}".format(ex, status, reason)
-            ) from ex
+            )
 
     def execute_changeset(self, changeset_id, stack_name):
         """
@@ -310,7 +297,7 @@ class Deployer:
         try:
             return self._client.execute_change_set(ChangeSetName=changeset_id, StackName=stack_name)
         except botocore.exceptions.ClientError as ex:
-            raise DeployFailedError(stack_name=stack_name, msg=str(ex)) from ex
+            raise DeployFailedError(stack_name=stack_name, msg=str(ex))
 
     def get_last_event_time(self, stack_name):
         """
@@ -414,9 +401,9 @@ class Deployer:
         else:
             raise RuntimeError("Invalid changeset type {0}".format(changeset_type))
 
-        # Poll every 30 seconds. Polling too frequently risks hitting rate limits
-        # on CloudFormation's DescribeStacks API
-        waiter_config = {"Delay": 30, "MaxAttempts": 120}
+        # Poll every 5 seconds. Optimizing for the case when the stack has only
+        # minimal changes, such the Code for Lambda Function
+        waiter_config = {"Delay": 5, "MaxAttempts": 720}
 
         try:
             waiter.wait(StackName=stack_name, WaiterConfig=waiter_config)
@@ -440,7 +427,7 @@ class Deployer:
             self.describe_changeset(result["Id"], stack_name)
             return result, changeset_type
         except botocore.exceptions.ClientError as ex:
-            raise DeployFailedError(stack_name=stack_name, msg=str(ex)) from ex
+            raise DeployFailedError(stack_name=stack_name, msg=str(ex))
 
     @pprint_column_names(
         format_string=OUTPUTS_FORMAT_STRING, format_kwargs=OUTPUTS_DEFAULTS_ARGS, table_header=OUTPUTS_TABLE_HEADER_NAME
@@ -480,4 +467,4 @@ class Deployer:
                 return None
 
         except botocore.exceptions.ClientError as ex:
-            raise DeployStackOutPutFailedError(stack_name=stack_name, msg=str(ex)) from ex
+            raise DeployStackOutPutFailedError(stack_name=stack_name, msg=str(ex))

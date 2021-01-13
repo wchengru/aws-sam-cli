@@ -6,15 +6,11 @@ import os
 import logging
 import boto3
 
-from samcli.commands.local.cli_common.user_exceptions import InvokeContextException
 from samcli.lib.utils.codeuri import resolve_code_path
-from samcli.lib.utils.packagetype import ZIP, IMAGE
-from samcli.local.docker.container import ContainerResponseException
 from samcli.local.lambdafn.env_vars import EnvironmentVariables
 from samcli.local.lambdafn.config import FunctionConfig
 from samcli.local.lambdafn.exceptions import FunctionNotFound
-from samcli.commands.local.lib.exceptions import InvalidIntermediateImageError
-from samcli.commands.local.lib.exceptions import OverridesNotWellDefinedError, NoPrivilegeException
+from samcli.commands.local.lib.exceptions import OverridesNotWellDefinedError
 
 LOG = logging.getLogger(__name__)
 
@@ -96,32 +92,12 @@ class LocalLambdaRunner:
             raise FunctionNotFound("Unable to find a Function with name '{}'".format(function_name))
 
         LOG.debug("Found one Lambda function with name '%s'", function_name)
-        if function.packagetype == ZIP:
-            LOG.info("Invoking %s (%s)", function.handler, function.runtime)
-        elif function.packagetype == IMAGE:
-            if not function.imageuri:
-                raise InvalidIntermediateImageError(
-                    f"ImageUri not provided for Function: {function_name} of PackageType: {function.packagetype}"
-                )
-            LOG.info("Invoking Container created from %s", function.imageuri)
-        config = self.get_invoke_config(function)
+
+        LOG.info("Invoking %s (%s)", function.handler, function.runtime)
+        config = self._get_invoke_config(function)
 
         # Invoke the function
-        try:
-            self.local_runtime.invoke(config, event, debug_context=self.debug_context, stdout=stdout, stderr=stderr)
-        except ContainerResponseException:
-            # NOTE(sriram-mv): This should still result in a exit code zero to avoid regressions.
-            LOG.info("No response from invoke container for %s", function.name)
-        except OSError as os_error:
-            # pylint: disable=no-member
-            if hasattr(os_error, "winerror") and os_error.winerror == 1314:
-                raise NoPrivilegeException(
-                    "Administrator, Windows Developer Mode, or SeCreateSymbolicLinkPrivilege is required to create symbolic link for files: {}, {}".format(
-                        os_error.filename, os_error.filename2
-                    )
-                ) from os_error
-
-            raise
+        self.local_runtime.invoke(config, event, debug_context=self.debug_context, stdout=stdout, stderr=stderr)
 
     def is_debugging(self):
         """
@@ -135,7 +111,7 @@ class LocalLambdaRunner:
         """
         return bool(self.debug_context)
 
-    def get_invoke_config(self, function):
+    def _get_invoke_config(self, function):
         """
         Returns invoke configuration to pass to Lambda Runtime to invoke the given function
 
@@ -144,10 +120,9 @@ class LocalLambdaRunner:
         """
 
         env_vars = self._make_env_vars(function)
-        code_abs_path = None
-        if function.packagetype == ZIP:
-            code_abs_path = resolve_code_path(self.cwd, function.codeuri)
-            LOG.debug("Resolved absolute path to code is %s", code_abs_path)
+        code_abs_path = resolve_code_path(self.cwd, function.codeuri)
+
+        LOG.debug("Resolved absolute path to code is %s", code_abs_path)
 
         function_timeout = function.timeout
 
@@ -161,9 +136,6 @@ class LocalLambdaRunner:
             name=function.name,
             runtime=function.runtime,
             handler=function.handler,
-            imageuri=function.imageuri,
-            imageconfig=function.imageconfig,
-            packagetype=function.packagetype,
             code_abs_path=code_abs_path,
             layers=function.layers,
             memory=function.memory,
@@ -226,7 +198,6 @@ class LocalLambdaRunner:
         aws_creds = self.get_aws_creds()
 
         return EnvironmentVariables(
-            function.name,
             function.memory,
             function.timeout,
             function.handler,

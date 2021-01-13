@@ -34,7 +34,6 @@ class SchemaTestDataSetup(TestCase):
         setup_non_partner_schema_data("other-schema", schemas_client)
         # WHEN the user follows interactive init prompts
         # 1: AWS Quick Start Templates
-        # 1: Zip Packagetype
         # 13: Java runtime
         # 1: dependency manager maven
         # eb-app-maven: response to name
@@ -43,11 +42,10 @@ class SchemaTestDataSetup(TestCase):
 
         user_input = """
 1
-1
 13
 1
 eb-app-maven
-1
+Y
 1
                 """
         with tempfile.TemporaryDirectory() as temp:

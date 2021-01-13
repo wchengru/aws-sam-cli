@@ -16,8 +16,6 @@ from unittest import TestCase
 from unittest.mock import patch, ANY
 import logging
 
-from samcli.lib.utils.packagetype import ZIP, IMAGE
-
 LOG = logging.getLogger()
 logging.basicConfig()
 
@@ -28,7 +26,6 @@ class TestSamConfigForAllCommands(TestCase):
 
         self.scratch_dir = tempfile.mkdtemp()
         Path(self.scratch_dir, "envvar.json").write_text("{}")
-        Path(self.scratch_dir, "container-envvar.json").write_text("{}")
 
         os.chdir(self.scratch_dir)
 
@@ -68,10 +65,7 @@ class TestSamConfigForAllCommands(TestCase):
                 ANY,
                 True,
                 "github.com",
-                False,
-                ZIP,
                 "nodejs10.x",
-                None,
                 "maven",
                 "myoutput",
                 "myname",
@@ -107,8 +101,6 @@ class TestSamConfigForAllCommands(TestCase):
             "template_file": "mytemplate.yaml",
             "base_dir": "basedir",
             "build_dir": "builddir",
-            "cache_dir": "cachedir",
-            "cache": False,
             "use_container": True,
             "manifest": "requirements.txt",
             "docker_network": "mynetwork",
@@ -135,11 +127,8 @@ class TestSamConfigForAllCommands(TestCase):
                 str(Path(os.getcwd(), "mytemplate.yaml")),
                 "basedir",
                 "builddir",
-                "cachedir",
                 True,
                 True,
-                False,
-                False,
                 "requirements.txt",
                 "mynetwork",
                 True,
@@ -158,7 +147,6 @@ class TestSamConfigForAllCommands(TestCase):
             "debug_port": [1, 2, 3],
             "debug_args": "args",
             "debugger_path": "mypath",
-            "container_env_vars": "container-envvar.json",
             "docker_volume_basedir": "basedir",
             "docker_network": "mynetwork",
             "log_file": "logfile",
@@ -193,7 +181,6 @@ class TestSamConfigForAllCommands(TestCase):
                 (1, 2, 3),
                 "args",
                 "mypath",
-                "container-envvar.json",
                 "basedir",
                 "mynetwork",
                 "logfile",
@@ -215,7 +202,6 @@ class TestSamConfigForAllCommands(TestCase):
             "debug_port": [1, 2, 3],
             "debug_args": "args",
             "debugger_path": "mypath",
-            "container_env_vars": "container-envvar.json",
             "docker_volume_basedir": "basedir",
             "docker_network": "mynetwork",
             "log_file": "logfile",
@@ -250,7 +236,6 @@ class TestSamConfigForAllCommands(TestCase):
                 (1, 2, 3),
                 "args",
                 "mypath",
-                "container-envvar.json",
                 "basedir",
                 "mynetwork",
                 "logfile",
@@ -258,8 +243,6 @@ class TestSamConfigForAllCommands(TestCase):
                 True,
                 True,
                 {"Key": "Value", "Key2": "Value2"},
-                None,
-                None,
             )
 
     @patch("samcli.commands.local.start_lambda.cli.do_cli")
@@ -273,7 +256,6 @@ class TestSamConfigForAllCommands(TestCase):
             "debug_port": [1, 2, 3],
             "debug_args": "args",
             "debugger_path": "mypath",
-            "container_env_vars": "container-envvar.json",
             "docker_volume_basedir": "basedir",
             "docker_network": "mynetwork",
             "log_file": "logfile",
@@ -307,7 +289,6 @@ class TestSamConfigForAllCommands(TestCase):
                 (1, 2, 3),
                 "args",
                 "mypath",
-                "container-envvar.json",
                 "basedir",
                 "mynetwork",
                 "logfile",
@@ -315,36 +296,21 @@ class TestSamConfigForAllCommands(TestCase):
                 True,
                 True,
                 {"Key": "Value"},
-                None,
-                None,
             )
 
-    @patch("samcli.lib.cli_validation.image_repository_validation.get_template_function_resource_ids")
-    @patch("samcli.lib.cli_validation.image_repository_validation.get_template_artifacts_format")
-    @patch("samcli.commands._utils.options.get_template_artifacts_format")
     @patch("samcli.commands.package.command.do_cli")
-    def test_package(
-        self,
-        do_cli_mock,
-        get_template_artifacts_format_mock,
-        cli_validation_artifacts_format_mock,
-        mock_get_template_function_resource_ids,
-    ):
-        mock_get_template_function_resource_ids.return_value = ["HelloWorldFunction"]
-        cli_validation_artifacts_format_mock.return_value = [ZIP]
-        get_template_artifacts_format_mock.return_value = [ZIP]
+    def test_package(self, do_cli_mock):
+
         config_values = {
             "template_file": "mytemplate.yaml",
             "s3_bucket": "mybucket",
             "force_upload": True,
             "s3_prefix": "myprefix",
-            "image_repository": "123456789012.dkr.ecr.us-east-1.amazonaws.com/test1",
             "kms_key_id": "mykms",
             "use_json": True,
             "metadata": '{"m1": "value1", "m2": "value2"}',
             "region": "myregion",
             "output_template_file": "output.yaml",
-            "signing_profiles": "function=profile:owner",
         }
 
         with samconfig_parameters(["package"], self.scratch_dir, **config_values) as config_path:
@@ -364,63 +330,23 @@ class TestSamConfigForAllCommands(TestCase):
             do_cli_mock.assert_called_with(
                 str(Path(os.getcwd(), "mytemplate.yaml")),
                 "mybucket",
-                "123456789012.dkr.ecr.us-east-1.amazonaws.com/test1",
-                {},
                 "myprefix",
                 "mykms",
                 "output.yaml",
                 True,
                 True,
-                False,
                 {"m1": "value1", "m2": "value2"},
-                {"function": {"profile_name": "profile", "profile_owner": "owner"}},
                 "myregion",
                 None,
-                False,
             )
 
-    @patch("samcli.commands._utils.options.get_template_artifacts_format")
-    @patch("samcli.commands.package.command.do_cli")
-    def test_package_with_image_repository_and_image_repositories(
-        self, do_cli_mock, get_template_artifacts_format_mock
-    ):
-
-        get_template_artifacts_format_mock.return_value = [IMAGE]
-        config_values = {
-            "template_file": "mytemplate.yaml",
-            "s3_bucket": "mybucket",
-            "force_upload": True,
-            "s3_prefix": "myprefix",
-            "image_repository": "123456789012.dkr.ecr.us-east-1.amazonaws.com/test1",
-            "image_repositories": ["HelloWorldFunction=123456789012.dkr.ecr.us-east-1.amazonaws.com/test1"],
-            "kms_key_id": "mykms",
-            "use_json": True,
-            "metadata": '{"m1": "value1", "m2": "value2"}',
-            "region": "myregion",
-            "output_template_file": "output.yaml",
-            "signing_profiles": "function=profile:owner",
-        }
-
-        with samconfig_parameters(["package"], self.scratch_dir, **config_values) as config_path:
-
-            from samcli.commands.package.command import cli
-
-            LOG.debug(Path(config_path).read_text())
-            runner = CliRunner()
-            result = runner.invoke(cli, [])
-
-            self.assertIsNotNone(result.exception)
-
-    @patch("samcli.lib.cli_validation.image_repository_validation.get_template_artifacts_format")
     @patch("samcli.commands.deploy.command.do_cli")
-    def test_deploy(self, do_cli_mock, get_template_artifacts_format_mock):
+    def test_deploy(self, do_cli_mock):
 
-        get_template_artifacts_format_mock.return_value = [ZIP]
         config_values = {
             "template_file": "mytemplate.yaml",
             "stack_name": "mystack",
             "s3_bucket": "mybucket",
-            "image_repository": "123456789012.dkr.ecr.us-east-1.amazonaws.com/test1",
             "force_upload": True,
             "s3_prefix": "myprefix",
             "kms_key_id": "mykms",
@@ -436,7 +362,6 @@ class TestSamConfigForAllCommands(TestCase):
             "guided": True,
             "confirm_changeset": True,
             "region": "myregion",
-            "signing_profiles": "function=profile:owner",
         }
 
         with samconfig_parameters(["deploy"], self.scratch_dir, **config_values) as config_path:
@@ -457,10 +382,7 @@ class TestSamConfigForAllCommands(TestCase):
                 str(Path(os.getcwd(), "mytemplate.yaml")),
                 "mystack",
                 "mybucket",
-                "123456789012.dkr.ecr.us-east-1.amazonaws.com/test1",
-                {},
                 True,
-                False,
                 "myprefix",
                 "mykms",
                 {"Key": "Value"},
@@ -476,59 +398,15 @@ class TestSamConfigForAllCommands(TestCase):
                 True,
                 "myregion",
                 None,
-                {"function": {"profile_name": "profile", "profile_owner": "owner"}},
-                False,
-                "samconfig.toml",
-                "default",
             )
 
     @patch("samcli.commands.deploy.command.do_cli")
-    def test_deploy_image_repositories_and_image_repository(self, do_cli_mock):
+    def test_deploy_different_parameter_override_format(self, do_cli_mock):
 
         config_values = {
             "template_file": "mytemplate.yaml",
             "stack_name": "mystack",
             "s3_bucket": "mybucket",
-            "image_repository": "123456789012.dkr.ecr.us-east-1.amazonaws.com/test1",
-            "image_repositories": ["HelloWorldFunction=123456789012.dkr.ecr.us-east-1.amazonaws.com/test1"],
-            "force_upload": True,
-            "s3_prefix": "myprefix",
-            "kms_key_id": "mykms",
-            "parameter_overrides": "ParameterKey=Key,ParameterValue=Value",
-            "capabilities": "cap1 cap2",
-            "no_execute_changeset": True,
-            "role_arn": "arn",
-            "notification_arns": "notify1 notify2",
-            "fail_on_empty_changeset": True,
-            "use_json": True,
-            "tags": 'a=tag1 b="tag with spaces"',
-            "metadata": '{"m1": "value1", "m2": "value2"}',
-            "guided": True,
-            "confirm_changeset": True,
-            "region": "myregion",
-            "signing_profiles": "function=profile:owner",
-        }
-
-        with samconfig_parameters(["deploy"], self.scratch_dir, **config_values) as config_path:
-
-            from samcli.commands.deploy.command import cli
-
-            LOG.debug(Path(config_path).read_text())
-            runner = CliRunner()
-            result = runner.invoke(cli, [])
-            self.assertIsNotNone(result.exception)
-
-    @patch("samcli.lib.cli_validation.image_repository_validation.get_template_artifacts_format")
-    @patch("samcli.commands.deploy.command.do_cli")
-    def test_deploy_different_parameter_override_format(self, do_cli_mock, get_template_artifacts_format_mock):
-
-        get_template_artifacts_format_mock.return_value = [ZIP]
-
-        config_values = {
-            "template_file": "mytemplate.yaml",
-            "stack_name": "mystack",
-            "s3_bucket": "mybucket",
-            "image_repository": "123456789012.dkr.ecr.us-east-1.amazonaws.com/test1",
             "force_upload": True,
             "s3_prefix": "myprefix",
             "kms_key_id": "mykms",
@@ -544,7 +422,6 @@ class TestSamConfigForAllCommands(TestCase):
             "guided": True,
             "confirm_changeset": True,
             "region": "myregion",
-            "signing_profiles": "function=profile:owner",
         }
 
         with samconfig_parameters(["deploy"], self.scratch_dir, **config_values) as config_path:
@@ -565,10 +442,7 @@ class TestSamConfigForAllCommands(TestCase):
                 str(Path(os.getcwd(), "mytemplate.yaml")),
                 "mystack",
                 "mybucket",
-                "123456789012.dkr.ecr.us-east-1.amazonaws.com/test1",
-                {},
                 True,
-                False,
                 "myprefix",
                 "mykms",
                 {"Key1": "Value1", "Key2": "Multiple spaces in the value"},
@@ -584,10 +458,6 @@ class TestSamConfigForAllCommands(TestCase):
                 True,
                 "myregion",
                 None,
-                {"function": {"profile_name": "profile", "profile_owner": "owner"}},
-                False,
-                "samconfig.toml",
-                "default",
             )
 
     @patch("samcli.commands.logs.command.do_cli")
@@ -660,7 +530,6 @@ class TestSamConfigWithOverrides(TestCase):
 
         self.scratch_dir = tempfile.mkdtemp()
         Path(self.scratch_dir, "otherenvvar.json").write_text("{}")
-        Path(self.scratch_dir, "other-containerenvvar.json").write_text("{}")
 
         os.chdir(self.scratch_dir)
 
@@ -680,7 +549,6 @@ class TestSamConfigWithOverrides(TestCase):
             "debug_port": [1, 2, 3],
             "debug_args": "args",
             "debugger_path": "mypath",
-            "container_env_vars": "container-envvar.json",
             "docker_volume_basedir": "basedir",
             "docker_network": "mynetwork",
             "log_file": "logfile",
@@ -718,8 +586,6 @@ class TestSamConfigWithOverrides(TestCase):
                     "otherargs",
                     "--debugger-path",
                     "otherpath",
-                    "--container-env-vars",
-                    "other-containerenvvar.json",
                     "--docker-volume-basedir",
                     "otherbasedir",
                     "--docker-network",
@@ -750,7 +616,6 @@ class TestSamConfigWithOverrides(TestCase):
                 (9, 8, 7),
                 "otherargs",
                 "otherpath",
-                "other-containerenvvar.json",
                 "otherbasedir",
                 "othernetwork",
                 "otherlogfile",
@@ -758,8 +623,6 @@ class TestSamConfigWithOverrides(TestCase):
                 True,
                 True,
                 {"A": "123", "C": "D", "E": "F12!", "G": "H"},
-                None,
-                None,
             )
 
     @patch("samcli.commands.local.start_lambda.cli.do_cli")
@@ -773,7 +636,6 @@ class TestSamConfigWithOverrides(TestCase):
             "debug_port": [1, 2, 3],
             "debug_args": "args",
             "debugger_path": "mypath",
-            "container_env_vars": "container-envvar.json",
             "docker_volume_basedir": "basedir",
             "docker_network": "mynetwork",
             "log_file": "logfile",
@@ -811,8 +673,6 @@ class TestSamConfigWithOverrides(TestCase):
                     "otherenvvar.json",
                     "--debugger-path",
                     "otherpath",
-                    "--container-env-vars",
-                    "other-containerenvvar.json",
                     "--log-file",
                     "otherlogfile",
                     # this is a case where cli args takes precedence over both
@@ -839,7 +699,6 @@ class TestSamConfigWithOverrides(TestCase):
                 (13579,),
                 "envargs",
                 "otherpath",
-                "other-containerenvvar.json",
                 "envbasedir",
                 "envnetwork",
                 "otherlogfile",
@@ -847,30 +706,7 @@ class TestSamConfigWithOverrides(TestCase):
                 False,
                 True,
                 {"A": "123", "C": "D", "E": "F12!", "G": "H"},
-                None,
-                None,
             )
-
-    @patch("samcli.commands.validate.validate.do_cli")
-    def test_secondary_option_name_template_validate(self, do_cli_mock):
-        # "--template" is an alias of "--template-file"
-        config_values = {"template": "mytemplate.yaml"}
-
-        with samconfig_parameters(["validate"], self.scratch_dir, **config_values) as config_path:
-
-            from samcli.commands.validate.validate import cli
-
-            LOG.debug(Path(config_path).read_text())
-            runner = CliRunner()
-            result = runner.invoke(cli, [])
-
-            LOG.info(result.output)
-            LOG.info(result.exception)
-            if result.exception:
-                LOG.exception("Command failed", exc_info=result.exc_info)
-            self.assertIsNone(result.exception)
-
-            do_cli_mock.assert_called_with(ANY, str(Path(os.getcwd(), "mytemplate.yaml")))
 
 
 @contextmanager

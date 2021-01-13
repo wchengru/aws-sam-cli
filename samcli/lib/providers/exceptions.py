@@ -9,6 +9,6 @@ class InvalidLayerReference(Exception):
     """
 
     def __init__(self):
-        super().__init__(
+        super(InvalidLayerReference, self).__init__(
             "Layer References need to be of type " "'AWS::Serverless::LayerVersion' or 'AWS::Lambda::LayerVersion'"
         )

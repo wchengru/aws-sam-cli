@@ -35,7 +35,6 @@ class EnvironmentVariables:
 
     def __init__(
         self,
-        function_name=None,
         function_memory=None,
         function_timeout=None,
         function_handler=None,
@@ -62,12 +61,7 @@ class EnvironmentVariables:
             environment variables. It should contain "key", "secret", "region" and optional "sessiontoken" keys
         """
 
-        self._function = {
-            "memory": function_memory,
-            "timeout": function_timeout,
-            "handler": function_handler,
-            "name": function_name,
-        }
+        self._function = {"memory": function_memory, "timeout": function_timeout, "handler": function_handler}
 
         self.variables = variables or {}
         self.shell_env_values = shell_env_values or {}
@@ -129,14 +123,6 @@ class EnvironmentVariables:
     def handler(self):
         return self._function["handler"]
 
-    @property
-    def name(self):
-        return self._function["name"]
-
-    @name.setter
-    def name(self, value):
-        self._function["name"] = value
-
     @handler.setter
     def handler(self, value):
         self._function["handler"] = value
@@ -155,17 +141,17 @@ class EnvironmentVariables:
             # Function configuration
             "AWS_LAMBDA_FUNCTION_MEMORY_SIZE": str(self.memory),
             "AWS_LAMBDA_FUNCTION_TIMEOUT": str(self.timeout),
-            "AWS_LAMBDA_FUNCTION_HANDLER": self._function["handler"],
-            "AWS_LAMBDA_FUNCTION_NAME": str(self.name),
-            "AWS_LAMBDA_FUNCTION_VERSION": "$LATEST",
-            "AWS_LAMBDA_LOG_GROUP_NAME": f"aws/lambda/{self.name}",
-            "AWS_LAMBDA_LOG_STREAM_NAME": "$LATEST",
+            "AWS_LAMBDA_FUNCTION_HANDLER": str(self._function["handler"]),
             # AWS Credentials - Use the input credentials or use the defaults
             "AWS_REGION": self.aws_creds.get("region", self._DEFAULT_AWS_CREDS["region"]),
             "AWS_DEFAULT_REGION": self.aws_creds.get("region", self._DEFAULT_AWS_CREDS["region"]),
             "AWS_ACCESS_KEY_ID": self.aws_creds.get("key", self._DEFAULT_AWS_CREDS["key"]),
-            "AWS_SECRET_ACCESS_KEY": self.aws_creds.get("secret", self._DEFAULT_AWS_CREDS["secret"]),
-            "AWS_ACCOUNT_ID": "123456789012",
+            "AWS_SECRET_ACCESS_KEY": self.aws_creds.get("secret", self._DEFAULT_AWS_CREDS["secret"])
+            # Additional variables we don't fill in
+            # "AWS_ACCOUNT_ID="
+            # "AWS_LAMBDA_EVENT_BODY=",
+            # "AWS_LAMBDA_FUNCTION_NAME=",
+            # "AWS_LAMBDA_FUNCTION_VERSION=",
         }
 
         # Session Token should be added **only** if the input creds have a token and the value is not empty.
