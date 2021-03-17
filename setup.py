@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import io
+import json
 import re
 import os
 from setuptools import setup, find_packages
@@ -32,11 +33,16 @@ def read_requirements(req="base.txt"):
 
 
 def read_version():
-    content = read(os.path.join(os.path.dirname(__file__), "samcli", "__init__.py"))
-    return re.search(r"__version__ = \"([^']+)\"", content).group(1)
+    metadata = read(os.path.join(os.path.dirname(__file__), "metadata.json"))
+    content = json.loads(metadata)
+    return content["sam-cli-version"]
 
+def read_cmd_name():
+    metadata = read(os.path.join(os.path.dirname(__file__), "metadata.json"))
+    content = json.loads(metadata)
+    return content["sam-cli-binary-name"]
 
-cmd_name = "sam"
+cmd_name = read_cmd_name
 if os.getenv("SAM_CLI_DEV"):
     # We are installing in a dev environment
     cmd_name = "samdev"
