@@ -18,6 +18,8 @@ if ! [ "$nightly_build" = "" ]; then
     sam_cli_spec_filename="samcli-nightly.spec"
     binary_name="sam-nightly"
 fi
+echo "sam_cli_spec_filename=$sam_cli_spec_filename"
+echo "binary_name=$sam_cli_spec_filename"
 
 set -eu
 
