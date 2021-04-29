@@ -5,13 +5,14 @@ import sys
 import docker
 import json
 
-from unittest import TestCase, skipUnless
+from unittest import TestCase
 from unittest.mock import Mock, call, patch, ANY
 from pathlib import Path, WindowsPath
 
 from parameterized import parameterized
 
 from samcli.lib.build.build_graph import FunctionBuildDefinition, LayerBuildDefinition
+from samcli.lib.iac.interface import Stack as IacStack, S3Asset
 from samcli.lib.providers.provider import ResourcesToBuildCollector
 from samcli.lib.build.app_builder import (
     ApplicationBuilder,
@@ -348,6 +349,14 @@ class TestApplicationBuilder_build(TestCase):
         self.assertEqual(result, mock_parallel_build_strategy.build())
 
 
+class PathValidator:
+    def __init__(self, path):
+        self._path = path
+
+    def __eq__(self, other):
+        return self._path is None if other is None else other.endswith(self._path)
+
+
 class TestApplicationBuilderForLayerBuild(TestCase):
     def setUp(self):
         self.layer1 = Mock()
@@ -375,9 +384,15 @@ class TestApplicationBuilderForLayerBuild(TestCase):
         self.builder._build_function_in_process = build_function_in_process_mock
         self.builder._build_layer("layer_name", "code_uri", "python3.8", ["python3.8"], "full_path")
 
-        build_function_in_process_mock.assert_called_once()
-        args, _ = build_function_in_process_mock.call_args_list[0]
-        self._validate_build_args(args, config_mock)
+        build_function_in_process_mock.assert_called_once_with(
+            config_mock,
+            PathValidator("code_uri"),
+            PathValidator("python"),
+            "scratch",
+            PathValidator("manifest_name"),
+            "python3.8",
+            None,
+        )
 
     @patch("samcli.lib.build.app_builder.get_workflow_config")
     @patch("samcli.lib.build.app_builder.osutils")
@@ -397,28 +412,97 @@ class TestApplicationBuilderForLayerBuild(TestCase):
 
         self.builder._build_function_on_container = build_function_on_container_mock
         self.builder._build_layer("layer_name", "code_uri", "python3.8", ["python3.8"], "full_path")
+        build_function_on_container_mock.assert_called_once_with(
+            config_mock,
+            PathValidator("code_uri"),
+            PathValidator("python"),
+            PathValidator("manifest_name"),
+            "python3.8",
+            None,
+            None,
+            None,
+        )
 
-        build_function_on_container_mock.assert_called_once()
-        args, _ = build_function_on_container_mock.call_args_list[0]
-        self._validate_build_args(args, config_mock)
+    @patch("samcli.lib.build.app_builder.get_workflow_config")
+    @patch("samcli.lib.build.app_builder.osutils")
+    @patch("samcli.lib.build.app_builder.get_layer_subfolder")
+    def test_must_build_layer_in_container_with_global_build_image(
+        self, get_layer_subfolder_mock, osutils_mock, get_workflow_config_mock
+    ):
+        self.builder._container_manager = self.container_manager
+        get_layer_subfolder_mock.return_value = "python"
+        config_mock = Mock()
+        config_mock.manifest_name = "manifest_name"
 
-    def _validate_build_args(self, args, config_mock):
-        self.assertEqual(config_mock, args[0])
-        self.assertTrue(args[1].endswith("code_uri"))
-        self.assertTrue(args[2].endswith("python"))
-        self.assertEqual("scratch", args[3])
-        self.assertTrue(args[4].endswith("manifest_name"))
-        self.assertEqual("python3.8", args[5])
+        scratch_dir = "scratch"
+        osutils_mock.mkdir_temp.return_value.__enter__ = Mock(return_value=scratch_dir)
+        osutils_mock.mkdir_temp.return_value.__exit__ = Mock()
+
+        get_workflow_config_mock.return_value = config_mock
+        build_function_on_container_mock = Mock()
+
+        build_images = {None: "test_image"}
+        self.builder._build_images = build_images
+        self.builder._build_function_on_container = build_function_on_container_mock
+        self.builder._build_layer("layer_name", "code_uri", "python3.8", ["python3.8"], "full_path")
+        build_function_on_container_mock.assert_called_once_with(
+            config_mock,
+            PathValidator("code_uri"),
+            PathValidator("python"),
+            PathValidator("manifest_name"),
+            "python3.8",
+            None,
+            None,
+            "test_image",
+        )
+
+    @patch("samcli.lib.build.app_builder.get_workflow_config")
+    @patch("samcli.lib.build.app_builder.osutils")
+    @patch("samcli.lib.build.app_builder.get_layer_subfolder")
+    def test_must_build_layer_in_container_with_specific_build_image(
+        self, get_layer_subfolder_mock, osutils_mock, get_workflow_config_mock
+    ):
+        self.builder._container_manager = self.container_manager
+        get_layer_subfolder_mock.return_value = "python"
+        config_mock = Mock()
+        config_mock.manifest_name = "manifest_name"
+
+        scratch_dir = "scratch"
+        osutils_mock.mkdir_temp.return_value.__enter__ = Mock(return_value=scratch_dir)
+        osutils_mock.mkdir_temp.return_value.__exit__ = Mock()
+
+        get_workflow_config_mock.return_value = config_mock
+        build_function_on_container_mock = Mock()
+
+        build_images = {"layer_name": "test_image"}
+        self.builder._build_images = build_images
+        self.builder._build_function_on_container = build_function_on_container_mock
+        self.builder._build_layer("layer_name", "code_uri", "python3.8", ["python3.8"], "full_path")
+        build_function_on_container_mock.assert_called_once_with(
+            config_mock,
+            PathValidator("code_uri"),
+            PathValidator("python"),
+            PathValidator("manifest_name"),
+            "python3.8",
+            None,
+            None,
+            "test_image",
+        )
 
 
 class TestApplicationBuilder_update_template(TestCase):
-    def make_root_template(self, resource_type, location_property_name):
-        return {
-            "Resources": {
-                "MyFunction1": {"Type": "AWS::Serverless::Function", "Properties": {"CodeUri": "oldvalue"}},
-                "ChildStackXXX": {"Type": resource_type, "Properties": {location_property_name: "./child.yaml"}},
+    def make_root_template(self, resource_type, location_property_name, child_stack):
+        iac_stack = IacStack()
+        iac_stack.update(
+            {
+                "Resources": {
+                    "MyFunction1": {"Type": "AWS::Serverless::Function", "Properties": {"CodeUri": "oldvalue"}},
+                    "ChildStackXXX": {"Type": resource_type, "Properties": {location_property_name: "./child.yaml"}},
+                }
             }
-        }
+        )
+        iac_stack["Resources"]["ChildStackXXX"].nested_stack = child_stack
+        return iac_stack
 
     def setUp(self):
         self.builder = ApplicationBuilder(Mock(), "builddir", "basedir", "cachedir")
@@ -440,6 +524,7 @@ class TestApplicationBuilder_update_template(TestCase):
     def test_must_update_resources_with_build_artifacts(self):
         self.maxDiff = None
         original_template_path = "/path/to/tempate.txt"
+        original_dir_path = "/path/to"
         built_artifacts = {
             "MyFunction1": "/path/to/build/MyFunction1",
             "MyFunction2": "/path/to/build/MyFunction2",
@@ -465,9 +550,10 @@ class TestApplicationBuilder_update_template(TestCase):
                 },
             }
         }
-
-        stack = Mock(stack_path="", template_dict=self.template_dict, location=original_template_path)
-        actual = self.builder.update_template(stack, built_artifacts, {})
+        iac_stack = IacStack()
+        iac_stack.update(self.template_dict)
+        stack = Mock(stack_path="", template_dict=iac_stack, origin_dir=original_dir_path)
+        actual = self.builder.update_template(stack, built_artifacts)
         self.assertEqual(actual, expected_result)
 
     @parameterized.expand([("AWS::Serverless::Application", "Location"), ("AWS::CloudFormation::Stack", "TemplateURL")])
@@ -476,7 +562,9 @@ class TestApplicationBuilder_update_template(TestCase):
     ):
         self.maxDiff = None
         original_child_template_path = "/path/to/child.yaml"
+        original_child_dir_path = "/path/to"
         original_root_template_path = "/path/to/template.yaml"
+        original_root_dir_path = "/path/to"
         built_artifacts = {
             "MyFunction1": "/path/to/build/MyFunction1",
             "ChildStackXXX/MyFunction1": "/path/to/build/ChildStackXXX/MyFunction1",
@@ -488,59 +576,75 @@ class TestApplicationBuilder_update_template(TestCase):
             "ChildStackXXX": "/path/to/build/ChildStackXXX/template.yaml",
         }
 
-        expected_child = {
-            "Resources": {
-                "MyFunction1": {
-                    "Type": "AWS::Serverless::Function",
-                    "Properties": {"CodeUri": os.path.join("build", "ChildStackXXX", "MyFunction1")},
-                },
-                "MyFunction2": {
-                    "Type": "AWS::Lambda::Function",
-                    "Properties": {"Code": os.path.join("build", "ChildStackXXX", "MyFunction2")},
-                },
-                "GlueResource": {"Type": "AWS::Glue::Job", "Properties": {"Command": {"ScriptLocation": "something"}}},
-                "OtherResource": {"Type": "AWS::Lambda::Version", "Properties": {"CodeUri": "something"}},
-                "MyImageFunction1": {
-                    "Type": "AWS::Lambda::Function",
-                    "Properties": {"Code": "myimagefunction1:Tag", "PackageType": IMAGE},
-                    "Metadata": {"Dockerfile": "Dockerfile", "DockerContext": "DockerContext", "DockerTag": "Tag"},
-                },
-            }
-        }
-        expected_root = {
-            "Resources": {
-                "MyFunction1": {
-                    "Type": "AWS::Serverless::Function",
-                    "Properties": {"CodeUri": os.path.join("build", "MyFunction1")},
-                },
-                "ChildStackXXX": {
-                    "Type": resource_type,
-                    "Properties": {
-                        location_property_name: os.path.join("build", "ChildStackXXX", "template.yaml"),
+        expected_child_iac_stack = IacStack()
+        expected_child_iac_stack.update(
+            {
+                "Resources": {
+                    "MyFunction1": {
+                        "Type": "AWS::Serverless::Function",
+                        "Properties": {"CodeUri": os.path.join("build", "ChildStackXXX", "MyFunction1")},
                     },
-                },
+                    "MyFunction2": {
+                        "Type": "AWS::Lambda::Function",
+                        "Properties": {"Code": os.path.join("build", "ChildStackXXX", "MyFunction2")},
+                    },
+                    "GlueResource": {
+                        "Type": "AWS::Glue::Job",
+                        "Properties": {"Command": {"ScriptLocation": "something"}},
+                    },
+                    "OtherResource": {"Type": "AWS::Lambda::Version", "Properties": {"CodeUri": "something"}},
+                    "MyImageFunction1": {
+                        "Type": "AWS::Lambda::Function",
+                        "Properties": {"Code": "myimagefunction1:Tag", "PackageType": IMAGE},
+                        "Metadata": {"Dockerfile": "Dockerfile", "DockerContext": "DockerContext", "DockerTag": "Tag"},
+                    },
+                }
             }
-        }
+        )
+
+        expected_root_iac_stack = IacStack()
+        expected_root_iac_stack.update(
+            {
+                "Resources": {
+                    "MyFunction1": {
+                        "Type": "AWS::Serverless::Function",
+                        "Properties": {"CodeUri": os.path.join("build", "MyFunction1")},
+                    },
+                    "ChildStackXXX": {
+                        "Type": resource_type,
+                        "Properties": {
+                            location_property_name: os.path.join("build", "ChildStackXXX", "template.yaml"),
+                        },
+                    },
+                }
+            }
+        )
+
+        child_iac_stack = IacStack(is_nested=True)
+        child_iac_stack.update(self.template_dict)
 
         stack_root = Mock(
             stack_path="",
-            template_dict=self.make_root_template(resource_type, location_property_name),
-            location=original_root_template_path,
+            template_dict=self.make_root_template(resource_type, location_property_name, child_iac_stack),
+            origin_dir=original_root_dir_path,
         )
-        actual_root = self.builder.update_template(stack_root, built_artifacts, stack_output_paths)
+        actual_root = self.builder.update_template(stack_root, built_artifacts)
+
         stack_child = Mock(
             stack_path="ChildStackXXX",
-            template_dict=self.template_dict,
-            location=original_child_template_path,
+            template_dict=child_iac_stack,
+            origin_dir=original_child_dir_path,
         )
-        actual_child = self.builder.update_template(stack_child, built_artifacts, stack_output_paths)
-        self.assertEqual(expected_root, actual_root)
-        self.assertEqual(expected_child, actual_child)
+        actual_child = self.builder.update_template(stack_child, built_artifacts)
+        self.assertDictEqual(expected_root_iac_stack, actual_root)
+        self.assertDictEqual(expected_child_iac_stack, actual_child)
 
     def test_must_skip_if_no_artifacts(self):
         built_artifacts = {}
-        stack = Mock(stack_path="", template_dict=self.template_dict, location="/foo/bar/template.txt")
-        actual = self.builder.update_template(stack, built_artifacts, {})
+        iac_stack = IacStack()
+        iac_stack.update(self.template_dict)
+        stack = Mock(stack_path="", template_dict=iac_stack, location="/foo/bar/template.txt")
+        actual = self.builder.update_template(stack, built_artifacts)
 
         self.assertEqual(actual, self.template_dict)
 
@@ -555,8 +659,6 @@ class TestApplicationBuilder_update_template_windows(TestCase):
                 "MyFunction2": {"Type": "AWS::Lambda::Function", "Properties": {"Code": "oldvalue"}},
                 "GlueResource": {"Type": "AWS::Glue::Job", "Properties": {"Command": {"ScriptLocation": "something"}}},
                 "OtherResource": {"Type": "AWS::Lambda::Version", "Properties": {"CodeUri": "something"}},
-                "ChildStack1": {"Type": "AWS::Serverless::Application", "Properties": {"Location": "oldvalue"}},
-                "ChildStack2": {"Type": "AWS::CloudFormation::Stack", "Properties": {"TemplateURL": "oldvalue"}},
             }
         }
 
@@ -579,6 +681,7 @@ class TestApplicationBuilder_update_template_windows(TestCase):
         with patch("pathlib.Path.__new__", new=mock_new):
             with patch("pathlib.Path.resolve", new=mock_resolve):
                 original_template_path = "C:\\path\\to\\template.txt"
+                original_dir_path = "C:\\path\\to"
                 function_1_path = "D:\\path\\to\\build\\MyFunction1"
                 function_2_path = "C:\\path2\\to\\build\\MyFunction2"
                 built_artifacts = {"MyFunction1": function_1_path, "MyFunction2": function_2_path}
@@ -586,39 +689,37 @@ class TestApplicationBuilder_update_template_windows(TestCase):
                 child_2_path = "C:\\path2\\to\\build\\ChildStack2\\template.yaml"
                 output_template_paths = {"ChildStack1": child_1_path, "ChildStack2": child_2_path}
 
-                expected_result = {
-                    "Resources": {
-                        "MyFunction1": {
-                            "Type": "AWS::Serverless::Function",
-                            "Properties": {"CodeUri": function_1_path},
-                        },
-                        "MyFunction2": {
-                            "Type": "AWS::Lambda::Function",
-                            "Properties": {"Code": "..\\..\\path2\\to\\build\\MyFunction2"},
-                        },
-                        "GlueResource": {
-                            "Type": "AWS::Glue::Job",
-                            "Properties": {"Command": {"ScriptLocation": "something"}},
-                        },
-                        "OtherResource": {"Type": "AWS::Lambda::Version", "Properties": {"CodeUri": "something"}},
-                        "ChildStack1": {
-                            "Type": "AWS::Serverless::Application",
-                            "Properties": {"Location": child_1_path},
-                        },
-                        "ChildStack2": {
-                            "Type": "AWS::CloudFormation::Stack",
-                            "Properties": {"TemplateURL": "..\\..\\path2\\to\\build\\ChildStack2\\template.yaml"},
-                        },
+                expected_iac_stack = IacStack()
+                expected_iac_stack.update(
+                    {
+                        "Resources": {
+                            "MyFunction1": {
+                                "Type": "AWS::Serverless::Function",
+                                "Properties": {"CodeUri": function_1_path},
+                            },
+                            "MyFunction2": {
+                                "Type": "AWS::Lambda::Function",
+                                "Properties": {"Code": "..\\..\\path2\\to\\build\\MyFunction2"},
+                            },
+                            "GlueResource": {
+                                "Type": "AWS::Glue::Job",
+                                "Properties": {"Command": {"ScriptLocation": "something"}},
+                            },
+                            "OtherResource": {"Type": "AWS::Lambda::Version", "Properties": {"CodeUri": "something"}},
+                        }
                     }
-                }
+                )
 
                 stack = Mock()
                 stack.stack_path = ""
-                stack.template_dict = self.template_dict
-                stack.location = original_template_path
+                iac_stack = IacStack()
+                iac_stack.update(self.template_dict)
+                stack.template_dict = iac_stack
+                stack.origin_dir = original_dir_path
 
-                actual = self.builder.update_template(stack, built_artifacts, output_template_paths)
-                self.assertEqual(actual, expected_result)
+                actual = self.builder.update_template(stack, built_artifacts)
+
+                self.assertDictEqual(actual, expected_iac_stack)
 
     def tearDown(self):
         os.path = self.saved_os_path_module
@@ -864,7 +965,7 @@ class TestApplicationBuilder_build_function(TestCase):
         self.builder._build_function(function_name, codeuri, packagetype, runtime, handler, artifacts_dir)
 
         self.builder._build_function_on_container.assert_called_with(
-            config_mock, code_dir, artifacts_dir, scratch_dir, manifest_path, runtime, None, None
+            config_mock, code_dir, artifacts_dir, manifest_path, runtime, None, None, None
         )
 
     @patch("samcli.lib.build.app_builder.get_workflow_config")
@@ -896,7 +997,75 @@ class TestApplicationBuilder_build_function(TestCase):
         )
 
         self.builder._build_function_on_container.assert_called_with(
-            config_mock, code_dir, artifacts_dir, scratch_dir, manifest_path, runtime, None, {"TEST": "test"}
+            config_mock, code_dir, artifacts_dir, manifest_path, runtime, None, {"TEST": "test"}, None
+        )
+
+    @patch("samcli.lib.build.app_builder.get_workflow_config")
+    @patch("samcli.lib.build.app_builder.osutils")
+    def test_must_build_in_container_with_custom_specified_build_image(self, osutils_mock, get_workflow_config_mock):
+        function_name = "function_name"
+        codeuri = "path/to/source"
+        runtime = "runtime"
+        packagetype = ZIP
+        scratch_dir = "scratch"
+        handler = "handler.handle"
+        image_uri = "image uri"
+        build_images = {function_name: image_uri}
+        config_mock = get_workflow_config_mock.return_value = Mock()
+        config_mock.manifest_name = "manifest_name"
+
+        osutils_mock.mkdir_temp.return_value.__enter__ = Mock(return_value=scratch_dir)
+        osutils_mock.mkdir_temp.return_value.__exit__ = Mock()
+
+        self.builder._build_function_on_container = Mock()
+
+        code_dir = str(Path("/base/dir/path/to/source").resolve())
+        artifacts_dir = str(Path("/build/dir/function_name"))
+        manifest_path = str(Path(os.path.join(code_dir, config_mock.manifest_name)).resolve())
+
+        # Settting the container manager will make us use the container
+        self.builder._container_manager = Mock()
+        self.builder._build_images = build_images
+        self.builder._build_function(
+            function_name, codeuri, packagetype, runtime, handler, artifacts_dir, container_env_vars=None
+        )
+
+        self.builder._build_function_on_container.assert_called_with(
+            config_mock, code_dir, artifacts_dir, manifest_path, runtime, None, None, image_uri
+        )
+
+    @patch("samcli.lib.build.app_builder.get_workflow_config")
+    @patch("samcli.lib.build.app_builder.osutils")
+    def test_must_build_in_container_with_custom_default_build_image(self, osutils_mock, get_workflow_config_mock):
+        function_name = "function_name"
+        codeuri = "path/to/source"
+        runtime = "runtime"
+        packagetype = ZIP
+        scratch_dir = "scratch"
+        handler = "handler.handle"
+        image_uri = "image uri"
+        build_images = {"abc": "efg", None: image_uri}
+        config_mock = get_workflow_config_mock.return_value = Mock()
+        config_mock.manifest_name = "manifest_name"
+
+        osutils_mock.mkdir_temp.return_value.__enter__ = Mock(return_value=scratch_dir)
+        osutils_mock.mkdir_temp.return_value.__exit__ = Mock()
+
+        self.builder._build_function_on_container = Mock()
+
+        code_dir = str(Path("/base/dir/path/to/source").resolve())
+        artifacts_dir = str(Path("/build/dir/function_name"))
+        manifest_path = str(Path(os.path.join(code_dir, config_mock.manifest_name)).resolve())
+
+        # Settting the container manager will make us use the container
+        self.builder._container_manager = Mock()
+        self.builder._build_images = build_images
+        self.builder._build_function(
+            function_name, codeuri, packagetype, runtime, handler, artifacts_dir, container_env_vars=None
+        )
+
+        self.builder._build_function_on_container.assert_called_with(
+            config_mock, code_dir, artifacts_dir, manifest_path, runtime, None, None, image_uri
         )
 
 
@@ -971,7 +1140,7 @@ class TestApplicationBuilder_build_function_on_container(TestCase):
         self.builder._parse_builder_response.return_value = response
 
         result = self.builder._build_function_on_container(
-            config, "source_dir", "artifacts_dir", "scratch_dir", "manifest_path", "runtime", None
+            config, "source_dir", "artifacts_dir", "manifest_path", "runtime", None
         )
         self.assertEqual(result, "artifacts_dir")
 
@@ -983,6 +1152,7 @@ class TestApplicationBuilder_build_function_on_container(TestCase):
             "source_dir",
             "manifest_path",
             "runtime",
+            image=None,
             log_level=log_level,
             optimizations=None,
             options=None,
@@ -1152,3 +1322,9 @@ class TestApplicationBuilder_make_env_vars(TestCase):
         }
         result = ApplicationBuilder._make_env_vars(function1, file_env_vars, inline_env_vars)
         self.assertEqual(result, {"ENV_VAR1": "2", "ENV_VAR2": "3"})
+
+
+def _assert_S3_assets(obj: TestCase, actual_asset: S3Asset, expected_asset: S3Asset):
+    obj.assertEqual(actual_asset.updated_source_path, expected_asset.updated_source_path)
+    obj.assertEqual(actual_asset.source_property, expected_asset.source_path)
+    obj.assertEqual(actual_asset.source_path, expected_asset.source_path)

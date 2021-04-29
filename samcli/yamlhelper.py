@@ -18,13 +18,15 @@ https://github.com/aws/aws-cli/blob/develop/awscli/customizations/cloudformation
 # pylint: disable=too-many-ancestors
 
 import json
+from typing import Dict, Optional
 from botocore.compat import OrderedDict
-
 import yaml
 
 # ScalarNode and SequenceNode are not declared in __all__,
 # TODO: we need to double check whether they are public and stable
 from yaml.resolver import ScalarNode, SequenceNode  # type: ignore
+
+from samcli.lib.iac.interface import Stack, DictSection, DictSectionItem, Resource, Parameter
 
 TAG_STR = "tag:yaml.org,2002:str"
 
@@ -99,6 +101,11 @@ def yaml_dump(dict_to_dump):
     :return:
     """
     CfnDumper.add_representer(OrderedDict, _dict_representer)
+    CfnDumper.add_representer(Stack, _dict_representer)
+    CfnDumper.add_representer(DictSection, _dict_representer)
+    CfnDumper.add_representer(DictSectionItem, _dict_representer)
+    CfnDumper.add_representer(Resource, _dict_representer)
+    CfnDumper.add_representer(Parameter, _dict_representer)
     CfnDumper.add_representer(str, string_representer)
     return yaml.dump(dict_to_dump, default_flow_style=False, Dumper=CfnDumper)
 
@@ -120,6 +127,30 @@ def yaml_parse(yamlstr):
         yaml.SafeLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _dict_constructor)
         yaml.SafeLoader.add_multi_constructor("!", intrinsics_multi_constructor)
         return yaml.safe_load(yamlstr)
+
+
+def parse_yaml_file(file_path, extra_context: Optional[Dict] = None):
+    """
+    Read the file, do variable substitution, parse it as JSON/YAML
+
+    Parameters
+    ----------
+    file_path : string
+        Path to the file to read
+    extra_context : Dict
+        if the file contains variable in the format of %(variableName)s i.e. the same format of the string % operator,
+        this parameter provides the values for those variables substitution.
+
+    Returns
+    -------
+    questions data as a dictionary
+    """
+
+    with open(file_path, "r", encoding="utf-8") as fp:
+        content = fp.read()
+        if isinstance(extra_context, dict):
+            content = content % extra_context
+        return yaml_parse(content)
 
 
 class CfnDumper(yaml.SafeDumper):

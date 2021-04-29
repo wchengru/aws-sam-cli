@@ -40,6 +40,7 @@ from .exceptions import (
     UnsupportedBuilderLibraryVersionError,
 )
 from .workflow_config import get_workflow_config, get_layer_subfolder, supports_build_in_container, CONFIG
+from ..iac.interface import S3Asset, ImageAsset
 
 LOG = logging.getLogger(__name__)
 
@@ -67,6 +68,7 @@ class ApplicationBuilder:
         docker_client: Optional[docker.DockerClient] = None,
         container_env_var: Optional[Dict] = None,
         container_env_var_file: Optional[str] = None,
+        build_images: Optional[Dict] = None,
     ) -> None:
         """
         Initialize the class
@@ -103,6 +105,8 @@ class ApplicationBuilder:
             An optional dictionary of environment variables to pass to the container
         container_env_var_file : Optional[str]
             An optional path to file that contains environment variables to pass to the container
+        build_images : Optional[Dict]
+            An optional dictionary of build images to be used for building functions
         """
         self._resources_to_build = resources_to_build
         self._build_dir = build_dir
@@ -122,6 +126,7 @@ class ApplicationBuilder:
         self._colored = Colored()
         self._container_env_var = container_env_var
         self._container_env_var_file = container_env_var_file
+        self._build_images = build_images or {}
 
     def build(self) -> Dict[str, str]:
         """
@@ -206,7 +211,6 @@ class ApplicationBuilder:
     def update_template(
         stack: Stack,
         built_artifacts: Dict[str, str],
-        stack_output_template_path_by_stack_path: Dict[str, str],
     ) -> Dict:
         """
         Given the path to built artifacts, update the template to point appropriate resource CodeUris to the artifacts
@@ -218,8 +222,6 @@ class ApplicationBuilder:
             The stack object representing the template
         built_artifacts : dict
             Map of LogicalId of a resource to the path where the the built artifacts for this resource lives
-        stack_output_template_path_by_stack_path: Dict[str, str]
-            A dictionary contains where the template of each stack will be written to
 
         Returns
         -------
@@ -227,17 +229,13 @@ class ApplicationBuilder:
             Updated template
         """
 
-        original_dir = pathlib.Path(stack.location).parent.resolve()
-
         template_dict = stack.template_dict
 
-        for logical_id, resource in template_dict.get("Resources", {}).items():
+        for _, resource in template_dict.get("Resources", {}).items():
 
-            full_path = get_full_path(stack.stack_path, logical_id)
-            has_build_artifact = full_path in built_artifacts
-            is_stack = full_path in stack_output_template_path_by_stack_path
+            full_path = get_full_path(stack.stack_path, resource.item_id)
 
-            if not has_build_artifact and not is_stack:
+            if full_path not in built_artifacts:
                 # this resource was not built or a nested stack.
                 # So skip it because there is no path/uri to update
                 continue
@@ -245,43 +243,67 @@ class ApplicationBuilder:
             resource_type = resource.get("Type")
             properties = resource.setdefault("Properties", {})
 
-            absolute_output_path = pathlib.Path(
-                built_artifacts[full_path]
-                if has_build_artifact
-                else stack_output_template_path_by_stack_path[full_path]
-            ).resolve()
+            absolute_output_path = pathlib.Path(built_artifacts[full_path]).resolve()
             # Default path to absolute path of the artifact
             store_path = str(absolute_output_path)
 
-            # In Windows, if template and artifacts are in two different drives, relpath will fail
-            if original_dir.drive == absolute_output_path.drive:
-                # Artifacts are written relative  the template because it makes the template portable
-                #   Ex: A CI/CD pipeline build stage could zip the output folder and pass to a
-                #   package stage running on a different machine
-                store_path = os.path.relpath(absolute_output_path, original_dir)
+            if resource.assets and isinstance(resource.assets[0], S3Asset):
+                resource.assets[0].updated_source_path = store_path
+            elif resource.assets and isinstance(resource.assets[0], ImageAsset):
+                resource.assets[0].source_local_image = built_artifacts[full_path]
+            else:
+                original_dir = pathlib.Path(stack.origin_dir).resolve()
+                relative_store_path = absolute_output_path
+                if original_dir.drive == absolute_output_path.drive:
+                    # Artifacts are written relative  the template because it makes the template portable
+                    #   Ex: A CI/CD pipeline build stage could zip the output folder and pass to a
+                    #   package stage running on a different machine
+                    relative_store_path = os.path.relpath(absolute_output_path, original_dir)
+                assets = resource.assets or []
 
-            if has_build_artifact:
                 if resource_type == SamBaseProvider.SERVERLESS_FUNCTION and properties.get("PackageType", ZIP) == ZIP:
-                    properties["CodeUri"] = store_path
+                    asset = S3Asset(
+                        source_path=properties["CodeUri"], updated_source_path=store_path, source_property="CodeUri"
+                    )
+                    assets.append(asset)
+                    resource.assets = assets
+                    properties["CodeUri"] = relative_store_path
 
                 if resource_type == SamBaseProvider.LAMBDA_FUNCTION and properties.get("PackageType", ZIP) == ZIP:
-                    properties["Code"] = store_path
+                    asset = S3Asset(
+                        source_path=properties["Code"], updated_source_path=store_path, source_property="Code"
+                    )
+                    assets.append(asset)
+                    resource.assets = assets
+                    properties["Code"] = relative_store_path
 
                 if resource_type in [SamBaseProvider.SERVERLESS_LAYER, SamBaseProvider.LAMBDA_LAYER]:
-                    properties["ContentUri"] = store_path
+                    asset = S3Asset(
+                        source_path=properties["ContentUri"],
+                        updated_source_path=store_path,
+                        source_property="ContentUri",
+                    )
+                    assets.append(asset)
+                    resource.assets = assets
+                    properties["ContentUri"] = relative_store_path
 
                 if resource_type == SamBaseProvider.LAMBDA_FUNCTION and properties.get("PackageType", ZIP) == IMAGE:
+                    asset = ImageAsset(
+                        source_local_image=built_artifacts[full_path],
+                        source_property="Code",
+                    )
+                    assets.append(asset)
+                    resource.assets = assets
                     properties["Code"] = built_artifacts[full_path]
 
                 if resource_type == SamBaseProvider.SERVERLESS_FUNCTION and properties.get("PackageType", ZIP) == IMAGE:
+                    asset = ImageAsset(
+                        source_local_image=built_artifacts[full_path],
+                        source_property="ImageUri",
+                    )
+                    assets.append(asset)
+                    resource.assets = assets
                     properties["ImageUri"] = built_artifacts[full_path]
-
-            if is_stack:
-                if resource_type == SamBaseProvider.SERVERLESS_APPLICATION:
-                    properties["Location"] = store_path
-
-                if resource_type == SamBaseProvider.CLOUDFORMATION_STACK:
-                    properties["TemplateURL"] = store_path
 
         return template_dict
 
@@ -428,9 +450,8 @@ class ApplicationBuilder:
 
             # By default prefer to build in-process for speed
             build_runtime = specified_workflow
-            build_method = self._build_function_in_process
+            options = ApplicationBuilder._get_build_options(layer_name, config.language, None)
             if self._container_manager:
-                build_method = self._build_function_on_container
                 if config.language == "provided":
                     LOG.warning(
                         "For container layer build, first compatible runtime is chosen as build target for container."
@@ -438,18 +459,17 @@ class ApplicationBuilder:
                     # Only set to this value if specified workflow is makefile
                     # which will result in config language as provided
                     build_runtime = compatible_runtimes[0]
-            options = ApplicationBuilder._get_build_options(layer_name, config.language, None)
+                # None key represents the global build image for all functions/layers
+                global_image = self._build_images.get(None)
+                image = self._build_images.get(layer_name, global_image)
+                self._build_function_on_container(
+                    config, code_dir, artifact_subdir, manifest_path, build_runtime, options, container_env_vars, image
+                )
+            else:
+                self._build_function_in_process(
+                    config, code_dir, artifact_subdir, scratch_dir, manifest_path, build_runtime, options
+                )
 
-            build_method(
-                config,
-                code_dir,
-                artifact_subdir,
-                scratch_dir,
-                manifest_path,
-                build_runtime,
-                options,
-                container_env_vars,
-            )
             # Not including subfolder in return so that we copy subfolder, instead of copying artifacts inside it.
             return artifact_dir
 
@@ -520,21 +540,25 @@ class ApplicationBuilder:
 
                 options = ApplicationBuilder._get_build_options(function_name, config.language, handler)
                 # By default prefer to build in-process for speed
-                build_method = self._build_function_in_process
                 if self._container_manager:
-                    build_method = self._build_function_on_container
-                    return build_method(
+                    # None represents the global build image for all functions/layers
+                    global_image = self._build_images.get(None)
+                    image = self._build_images.get(function_name, global_image)
+
+                    return self._build_function_on_container(
                         config,
                         code_dir,
                         artifact_dir,
-                        scratch_dir,
                         manifest_path,
                         runtime,
                         options,
                         container_env_vars,
+                        image,
                     )
 
-                return build_method(config, code_dir, artifact_dir, scratch_dir, manifest_path, runtime, options)
+                return self._build_function_in_process(
+                    config, code_dir, artifact_dir, scratch_dir, manifest_path, runtime, options
+                )
 
         # pylint: disable=fixme
         # FIXME: we need to throw an exception here, packagetype could be something else
@@ -571,8 +595,7 @@ class ApplicationBuilder:
         scratch_dir: str,
         manifest_path: str,
         runtime: str,
-        options: Optional[dict],
-        container_env_vars: Optional[Dict] = None,
+        options: Optional[Dict],
     ) -> str:
 
         builder = LambdaBuilder(
@@ -604,11 +627,11 @@ class ApplicationBuilder:
         config: CONFIG,
         source_dir: str,
         artifacts_dir: str,
-        scratch_dir: str,
         manifest_path: str,
         runtime: str,
         options: Optional[Dict],
         container_env_vars: Optional[Dict] = None,
+        build_image: Optional[str] = None,
     ) -> str:
         # _build_function_on_container() is only called when self._container_manager if not None
         if not self._container_manager:
@@ -642,6 +665,7 @@ class ApplicationBuilder:
             executable_search_paths=config.executable_search_paths,
             mode=self._mode,
             env_vars=container_env_vars,
+            image=build_image,
         )
 
         try:

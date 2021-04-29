@@ -2,12 +2,16 @@ import pathlib
 import platform
 import time
 import uuid
+
+from parameterized import parameterized
+
 import samcli
 
 from unittest import TestCase
 from unittest.mock import patch, Mock, ANY, call
 
 import samcli.lib.telemetry.metric
+from samcli.lib.telemetry.cicd import CICDPlatform
 from samcli.lib.telemetry.metric import (
     capture_return_value,
     _get_metric,
@@ -16,6 +20,7 @@ from samcli.lib.telemetry.metric import (
     track_template_warnings,
     capture_parameter,
     Metric,
+    MetricName,
 )
 from samcli.commands.exceptions import UserException
 
@@ -37,9 +42,9 @@ class TestSendInstalledMetric(TestCase):
         send_installed_metric()
         args, _ = telemetry_mock.emit.call_args_list[0]
         metric = args[0]
-        assert metric.get_metric_name() == "installed"
+        assert metric.name == "installed"
         self.assertGreaterEqual(
-            metric.get_data().items(), {"osPlatform": platform.system(), "telemetryEnabled": False}.items()
+            metric.data.items(), {"osPlatform": platform.system(), "telemetryEnabled": False}.items()
         )
 
 
@@ -91,8 +96,8 @@ class TestTrackWarning(TestCase):
         }
         args, _ = self.telemetry_instance.emit.call_args_list[0]
         metric = args[0]
-        assert metric.get_metric_name() == "templateWarning"
-        self.assertGreaterEqual(metric.get_data().items(), expected_attrs.items())
+        assert metric.name == "templateWarning"
+        self.assertGreaterEqual(metric.data.items(), expected_attrs.items())
         secho_mock.assert_called_with("WARNING: DummyWarningMessage", fg="yellow")
 
     @patch("samcli.lib.telemetry.metric.Context")
@@ -117,8 +122,8 @@ class TestTrackWarning(TestCase):
         }
         args, _ = self.telemetry_instance.emit.call_args_list[0]
         metric = args[0]
-        assert metric.get_metric_name() == "templateWarning"
-        self.assertGreaterEqual(metric.get_data().items(), expected_attrs.items())
+        assert metric.name == "templateWarning"
+        self.assertGreaterEqual(metric.data.items(), expected_attrs.items())
         secho_mock.assert_not_called()
 
 
@@ -139,6 +144,9 @@ class TestTrackCommand(TestCase):
         self.context_mock.debug = False
         self.context_mock.region = "myregion"
         self.context_mock.command_path = "fakesam local invoke"
+        self.context_mock.command_params = {
+            "project_type": "some_project",
+        }
 
         # Enable telemetry so we can actually run the tests
         self.gc_instance_mock.telemetry_enabled = True
@@ -158,12 +166,13 @@ class TestTrackCommand(TestCase):
 
         args, _ = self.telemetry_instance.emit.call_args_list[0]
         metric = args[0]
-        assert metric.get_metric_name() == "commandRun"
+        assert metric.name == "commandRun"
         self.assertEqual(self.telemetry_instance.emit.mock_calls, [call(ANY)], "The one command metric must be sent")
 
     @patch("samcli.lib.telemetry.metric.Context")
     def test_must_emit_command_run_metric(self, ContextMock):
         ContextMock.get_current_context.return_value = self.context_mock
+        self.context_mock
 
         def real_fn():
             pass
@@ -178,11 +187,12 @@ class TestTrackCommand(TestCase):
             "duration": ANY,
             "exitReason": "success",
             "exitCode": 0,
+            "metricSpecificAttributes": {"projectType": "some_project"},
         }
         args, _ = self.telemetry_instance.emit.call_args_list[0]
         metric = args[0]
-        assert metric.get_metric_name() == "commandRun"
-        self.assertGreaterEqual(metric.get_data().items(), expected_attrs.items())
+        assert metric.name == "commandRun"
+        self.assertGreaterEqual(metric.data.items(), expected_attrs.items())
 
     @patch("samcli.lib.telemetry.metric.Context")
     def test_must_emit_command_run_metric_with_sanitized_profile_value(self, ContextMock):
@@ -197,8 +207,8 @@ class TestTrackCommand(TestCase):
         expected_attrs = _ignore_common_attributes({"awsProfileProvided": True})
         args, _ = self.telemetry_instance.emit.call_args_list[0]
         metric = args[0]
-        assert metric.get_metric_name() == "commandRun"
-        self.assertGreaterEqual(metric.get_data().items(), expected_attrs.items())
+        assert metric.name == "commandRun"
+        self.assertGreaterEqual(metric.data.items(), expected_attrs.items())
 
     @patch("samcli.lib.telemetry.metric.Context")
     def test_must_record_function_duration(self, ContextMock):
@@ -214,12 +224,45 @@ class TestTrackCommand(TestCase):
         # And grab the second argument passed to this call, which are the attributes
         args, _ = self.telemetry_instance.emit.call_args_list[0]
         metric = args[0]
-        assert metric.get_metric_name() == "commandRun"
+        assert metric.name == "commandRun"
         self.assertGreaterEqual(
-            metric.get_data()["duration"],
+            metric.data["duration"],
             sleep_duration,
             "Measured duration must be in milliseconds and " "greater than equal to  the sleep duration",
         )
+
+    @patch("samcli.lib.telemetry.metric.Context")
+    def test_must_record_project_type(self, ContextMock):
+        ContextMock.get_current_context.return_value = self.context_mock
+        self.context_mock.command_params["project_type"] = "CFN"
+
+        def real_fn():
+            pass
+
+        track_command(real_fn)()
+
+        expected_attrs = _ignore_common_attributes({"metricSpecificAttributes": {"projectType": "CFN"}})
+        args, _ = self.telemetry_instance.emit.call_args_list[0]
+        metric = args[0]
+        assert metric.name == "commandRun"
+        self.assertGreaterEqual(metric.data.items(), expected_attrs.items())
+
+    @patch("samcli.lib.telemetry.metric.Context")
+    def test_must_not_record_project_type_when_no_project_type(self, ContextMock):
+        ContextMock.get_current_context.return_value = self.context_mock
+        if "project_type" in self.context_mock.command_params:
+            del self.context_mock.command_params["project_type"]
+
+        def real_fn():
+            pass
+
+        track_command(real_fn)()
+
+        expected_attrs = _ignore_common_attributes({"metricSpecificAttributes": {}})
+        args, _ = self.telemetry_instance.emit.call_args_list[0]
+        metric = args[0]
+        assert metric.name == "commandRun"
+        self.assertGreaterEqual(metric.data.items(), expected_attrs.items())
 
     @patch("samcli.lib.telemetry.metric.Context")
     def test_must_record_user_exception(self, ContextMock):
@@ -241,8 +284,8 @@ class TestTrackCommand(TestCase):
         expected_attrs = _ignore_common_attributes({"exitReason": "UserException", "exitCode": 1235})
         args, _ = self.telemetry_instance.emit.call_args_list[0]
         metric = args[0]
-        assert metric.get_metric_name() == "commandRun"
-        self.assertGreaterEqual(metric.get_data().items(), expected_attrs.items())
+        assert metric.name == "commandRun"
+        self.assertGreaterEqual(metric.data.items(), expected_attrs.items())
 
     @patch("samcli.lib.telemetry.metric.Context")
     def test_must_record_wrapped_user_exception(self, ContextMock):
@@ -264,8 +307,8 @@ class TestTrackCommand(TestCase):
         expected_attrs = _ignore_common_attributes({"exitReason": "CustomException", "exitCode": 1235})
         args, _ = self.telemetry_instance.emit.call_args_list[0]
         metric = args[0]
-        assert metric.get_metric_name() == "commandRun"
-        self.assertGreaterEqual(metric.get_data().items(), expected_attrs.items())
+        assert metric.name == "commandRun"
+        self.assertGreaterEqual(metric.data.items(), expected_attrs.items())
 
     @patch("samcli.lib.telemetry.metric.Context")
     def test_must_record_any_exceptions(self, ContextMock):
@@ -288,8 +331,8 @@ class TestTrackCommand(TestCase):
         )
         args, _ = self.telemetry_instance.emit.call_args_list[0]
         metric = args[0]
-        assert metric.get_metric_name() == "commandRun"
-        self.assertGreaterEqual(metric.get_data().items(), expected_attrs.items())
+        assert metric.name == "commandRun"
+        self.assertGreaterEqual(metric.data.items(), expected_attrs.items())
 
     @patch("samcli.lib.telemetry.metric.Context")
     def test_must_return_value_from_decorated_function(self, ContextMock):
@@ -322,7 +365,7 @@ class TestTrackCommand(TestCase):
 
         args, _ = self.telemetry_instance.emit.call_args_list[0]
         metric = args[0]
-        assert metric.get_metric_name() == "commandRun"
+        assert metric.name == "commandRun"
         self.assertEqual(
             self.telemetry_instance.emit.mock_calls,
             [call(ANY)],
@@ -347,10 +390,10 @@ class TestParameterCapture(TestCase):
             arg1_data = "arg1 test data"
             arg2_data = "arg2 test data"
             capture_parameter(metric_name, "m1", 0)(test_func)(arg1_data, arg2_data)
-            assert _get_metric(metric_name).get_data()["m1"] == arg1_data
+            assert _get_metric(metric_name).data["m1"] == arg1_data
             capture_parameter(metric_name, "m2", 1)(test_func)(arg1_data, arg2_data)
-            assert _get_metric(metric_name).get_data()["m1"] == arg1_data
-            assert _get_metric(metric_name).get_data()["m2"] == arg2_data
+            assert _get_metric(metric_name).data["m1"] == arg1_data
+            assert _get_metric(metric_name).data["m2"] == arg2_data
 
     def test_must_capture_positional_parameter_as_list(self):
         def test_func(arg1, arg2):
@@ -362,10 +405,10 @@ class TestParameterCapture(TestCase):
             arg1_data = "arg1 test data"
             arg2_data = "arg2 test data"
             capture_parameter(metric_name, "m1", 0, as_list=True)(test_func)(arg1_data, arg2_data)
-            assert arg1_data in _get_metric(metric_name).get_data()["m1"]
+            assert arg1_data in _get_metric(metric_name).data["m1"]
             capture_parameter(metric_name, "m1", 1, as_list=True)(test_func)(arg1_data, arg2_data)
-            assert arg1_data in _get_metric(metric_name).get_data()["m1"]
-            assert arg2_data in _get_metric(metric_name).get_data()["m1"]
+            assert arg1_data in _get_metric(metric_name).data["m1"]
+            assert arg2_data in _get_metric(metric_name).data["m1"]
 
     def test_must_capture_named_parameter(self):
         def test_func(arg1, arg2, kwarg1=None, kwarg2=None):
@@ -381,12 +424,12 @@ class TestParameterCapture(TestCase):
             capture_parameter(metric_name, "km1", "kwarg1")(test_func)(
                 arg1_data, arg2_data, kwarg1=kwarg1_data, kwarg2=kwarg2_data
             )
-            assert _get_metric(metric_name).get_data()["km1"] == kwarg1_data
+            assert _get_metric(metric_name).data["km1"] == kwarg1_data
             capture_parameter(metric_name, "km2", "kwarg2")(test_func)(
                 arg1_data, arg2_data, kwarg1=kwarg1_data, kwarg2=kwarg2_data
             )
-            assert _get_metric(metric_name).get_data()["km1"] == kwarg1_data
-            assert _get_metric(metric_name).get_data()["km2"] == kwarg2_data
+            assert _get_metric(metric_name).data["km1"] == kwarg1_data
+            assert _get_metric(metric_name).data["km2"] == kwarg2_data
 
     def test_must_capture_nested_parameter(self):
         def test_func(arg1, arg2):
@@ -404,12 +447,12 @@ class TestParameterCapture(TestCase):
             capture_parameter(metric_name, "m1", 0, parameter_nested_identifier="nested_data")(test_func)(
                 arg1_data, arg2_data
             )
-            assert _get_metric(metric_name).get_data()["m1"] == arg1_nested_data
+            assert _get_metric(metric_name).data["m1"] == arg1_nested_data
             capture_parameter(metric_name, "m2", 1, parameter_nested_identifier="nested.data")(test_func)(
                 arg1_data, arg2_data
             )
-            assert _get_metric(metric_name).get_data()["m1"] == arg1_nested_data
-            assert _get_metric(metric_name).get_data()["m2"] == arg2_nested_data
+            assert _get_metric(metric_name).data["m1"] == arg1_nested_data
+            assert _get_metric(metric_name).data["m2"] == arg2_nested_data
 
     def test_must_capture_return_value(self):
         def test_func(arg1, arg2):
@@ -421,7 +464,7 @@ class TestParameterCapture(TestCase):
             arg1_data = "arg1 test data"
             arg2_data = "arg2 test data"
             capture_return_value(metric_name, "m1")(test_func)(arg1_data, arg2_data)
-            assert _get_metric(metric_name).get_data()["m1"] == arg1_data
+            assert _get_metric(metric_name).data["m1"] == arg1_data
 
 
 class TestMetric(TestCase):
@@ -431,28 +474,43 @@ class TestMetric(TestCase):
     def tearDown(self):
         pass
 
+    @parameterized.expand([(CICDPlatform.Appveyor, "Appveyor", "ci"), (None, "CLI", False)])
+    @patch("samcli.lib.telemetry.metric.CICDDetector.platform")
     @patch("samcli.lib.telemetry.metric.platform")
     @patch("samcli.lib.telemetry.metric.Context")
     @patch("samcli.lib.telemetry.metric.GlobalConfig")
     @patch("samcli.lib.telemetry.metric.uuid")
-    def test_must_add_common_attributes(self, uuid_mock, gc_mock, context_mock, platform_mock):
+    def test_must_add_common_attributes(
+        self, cicd_platform, execution_env, ci, uuid_mock, gc_mock, context_mock, platform_mock, cicd_platform_mock
+    ):
         request_id = uuid_mock.uuid4.return_value = "fake requestId"
         installation_id = gc_mock.return_value.installation_id = "fake installation id"
         session_id = context_mock.get_current_context.return_value.session_id = "fake installation id"
         python_version = platform_mock.python_version.return_value = "8.8.0"
+        cicd_platform_mock.return_value = cicd_platform
 
         metric = Metric("metric_name")
 
-        assert metric.get_data()["requestId"] == request_id
-        assert metric.get_data()["installationId"] == installation_id
-        assert metric.get_data()["sessionId"] == session_id
-        assert metric.get_data()["executionEnvironment"] == "CLI"
-        assert metric.get_data()["pyversion"] == python_version
-        assert metric.get_data()["samcliVersion"] == samcli.__version__
+        assert metric.data["requestId"] == request_id
+        assert metric.data["installationId"] == installation_id
+        assert metric.data["sessionId"] == session_id
+        assert metric.data["executionEnvironment"] == execution_env
+        assert metric.data["ci"] == bool(ci)
+        assert metric.data["pyversion"] == python_version
+        assert metric.data["samcliVersion"] == samcli.__version__
+        assert metric.data["metricSpecificAttributes"] == {}
 
 
 def _ignore_common_attributes(data):
-    common_attrs = ["requestId", "installationId", "sessionId", "executionEnvironment", "pyversion", "samcliVersion"]
+    common_attrs = [
+        "requestId",
+        "installationId",
+        "sessionId",
+        "executionEnvironment",
+        "pyversion",
+        "samcliVersion",
+        "metricSpecificAttributes",
+    ]
     for a in common_attrs:
         if a not in data:
             data[a] = ANY

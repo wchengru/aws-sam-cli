@@ -5,7 +5,7 @@ from unittest import TestCase
 from unittest.mock import Mock, patch, call
 from parameterized import parameterized
 
-from samcli.commands.build.command import do_cli, _get_mode_value_from_envvar, _process_env_var
+from samcli.commands.build.command import do_cli, _get_mode_value_from_envvar, _process_env_var, _process_image_options
 from samcli.commands.exceptions import UserException
 from samcli.lib.build.app_builder import (
     BuildError,
@@ -50,6 +50,9 @@ class TestDoCli(TestCase):
         modified_template_child = "modified template 2"
         builder_mock.update_template.side_effect = [modified_template_root, modified_template_child]
 
+        iac = Mock()
+        project = Mock()
+
         do_cli(
             "function_identifier",
             "template",
@@ -67,6 +70,10 @@ class TestDoCli(TestCase):
             "mode",
             (""),
             "container_env_var_file",
+            (),
+            "CFN",
+            iac,
+            project,
         )
 
         ApplicationBuilderMock.assert_called_once_with(
@@ -82,6 +89,7 @@ class TestDoCli(TestCase):
             parallel="parallel",
             container_env_var={},
             container_env_var_file="container_env_var_file",
+            build_images={},
         )
         builder_mock.build.assert_called_once()
         builder_mock.update_template.assert_has_calls(
@@ -89,31 +97,16 @@ class TestDoCli(TestCase):
                 call(
                     root_stack,
                     artifacts,
-                    stack_output_template_path_by_stack_path,
                 )
             ],
             [
                 call(
                     child_stack,
                     artifacts,
-                    stack_output_template_path_by_stack_path,
                 )
             ],
         )
-        move_template_mock.assert_has_calls(
-            [
-                call(
-                    root_stack.location,
-                    stack_output_template_path_by_stack_path[root_stack.stack_path],
-                    modified_template_root,
-                ),
-                call(
-                    child_stack.location,
-                    stack_output_template_path_by_stack_path[child_stack.stack_path],
-                    modified_template_child,
-                ),
-            ]
-        )
+        iac.write_project.assert_has_calls([call(ctx_mock.project, ctx_mock.build_dir)])
 
     @parameterized.expand(
         [
@@ -156,6 +149,10 @@ class TestDoCli(TestCase):
                 "mode",
                 (""),
                 "container_env_var_file",
+                (),
+                "CFN",
+                Mock(),
+                Mock(),
             )
 
         self.assertEqual(str(ctx.exception), str(exception))
@@ -168,6 +165,8 @@ class TestDoCli(TestCase):
         BuildContextMock.return_value.__enter__ = Mock()
         BuildContextMock.return_value.__enter__.return_value = ctx_mock
         ApplicationBuilderMock.side_effect = FunctionNotFound("Function Not Found")
+        iac = Mock()
+        project = Mock()
 
         with self.assertRaises(UserException) as ctx:
             do_cli(
@@ -187,6 +186,10 @@ class TestDoCli(TestCase):
                 "mode",
                 (""),
                 "container_env_var_file",
+                (),
+                "CFN",
+                iac,
+                project,
             )
 
         self.assertEqual(str(ctx.exception), "Function Not Found")
@@ -257,3 +260,26 @@ class TestEnvVarParsing(TestCase):
 
         result = _process_env_var(container_env_vars)
         self.assertEqual(result, {})
+
+
+class TestImageParsing(TestCase):
+    def check(self, image_options, expected):
+        self.assertEqual(_process_image_options(image_options), expected)
+
+    def test_empty_list(self):
+        self.check([], {})
+
+    def test_default_image(self):
+        self.check(["image1"], {None: "image1"})
+
+    def test_one_function_image(self):
+        self.check(["Function1=image1"], {"Function1": "image1"})
+
+    def test_one_function_with_default_image(self):
+        self.check(["Function1=image1", "image2"], {"Function1": "image1", None: "image2"})
+
+    def test_two_functions_with_default_image(self):
+        self.check(
+            ["Function1=image1", "Function2=image2", "image3"],
+            {"Function1": "image1", "Function2": "image2", None: "image3"},
+        )
