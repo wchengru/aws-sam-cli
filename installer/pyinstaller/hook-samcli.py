@@ -1,5 +1,9 @@
 from PyInstaller.utils import hooks
 
+# This is a PyInstaller hook file. A hook file defines additional
+# source files or data files to/not to import.
+# https://pyinstaller.readthedocs.io/en/stable/hooks.html
+
 hiddenimports = [
     "cookiecutter.extensions",
     "jinja2_time",
